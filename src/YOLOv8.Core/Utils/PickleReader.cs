@@ -294,18 +294,34 @@ public class PickleReader
                 {
                     var value = _stack.Pop();
                     var key = _stack.Pop();
-                    if (_stack.Peek() is Dictionary<string, object?> dict)
+                    var target = _stack.Peek();
+                    if (target is Dictionary<string, object?> dict)
+                    {
                         dict[key?.ToString() ?? ""] = value;
+                    }
+                    else if (target is PythonObject pyObj)
+                    {
+                        // nn.Module and similar use dict-like SETITEM during unpickle
+                        pyObj.SetState ??= new Dictionary<string, object?>();
+                        pyObj.SetState[key?.ToString() ?? ""] = value;
+                    }
                     break;
                 }
 
                 case 0x75: // SETITEMS (from mark)
                 {
                     var items = PopMark();
-                    if (_stack.Peek() is Dictionary<string, object?> dict)
+                    var target = _stack.Peek();
+                    if (target is Dictionary<string, object?> dict)
                     {
                         for (int i = 0; i < items.Count - 1; i += 2)
                             dict[items[i]?.ToString() ?? ""] = items[i + 1];
+                    }
+                    else if (target is PythonObject pyObj)
+                    {
+                        pyObj.SetState ??= new Dictionary<string, object?>();
+                        for (int i = 0; i < items.Count - 1; i += 2)
+                            pyObj.SetState[items[i]?.ToString() ?? ""] = items[i + 1];
                     }
                     break;
                 }
@@ -397,10 +413,19 @@ public class PickleReader
 
                     if (callable is PythonGlobal global)
                     {
-                        var result = new PythonObject(global);
-                        if (args is List<object?> argList)
-                            result.Args = argList;
-                        _stack.Push(result);
+                        // Special handling for dict-like types: represent as actual C# dictionaries
+                        // so that SETITEMS/SETITEM work correctly on them
+                        if (global.Name is "OrderedDict" or "dict" or "defaultdict")
+                        {
+                            _stack.Push(new Dictionary<string, object?>());
+                        }
+                        else
+                        {
+                            var result = new PythonObject(global);
+                            if (args is List<object?> argList)
+                                result.Args = argList;
+                            _stack.Push(result);
+                        }
                     }
                     else
                     {
