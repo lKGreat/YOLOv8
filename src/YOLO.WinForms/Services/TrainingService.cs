@@ -1,3 +1,4 @@
+using TorchSharp;
 using YOLO.Training;
 
 namespace YOLO.WinForms.Services;
@@ -43,7 +44,8 @@ public class TrainingService
         string trainDataDir,
         string? valDataDir,
         string[]? classNames = null,
-        IProgress<TrainingProgress>? progress = null)
+        IProgress<TrainingProgress>? progress = null,
+        torch.Device? device = null)
     {
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -55,8 +57,9 @@ public class TrainingService
                 progress?.Report(new TrainingProgress("Initializing", 0, "Creating model and datasets..."));
                 LogMessage?.Invoke(this, $"Starting training: {config.ModelVersion}{config.ModelVariant}");
                 LogMessage?.Invoke(this, $"Epochs: {config.Epochs}, Batch: {config.BatchSize}, ImgSize: {config.ImgSize}");
+                LogMessage?.Invoke(this, $"Device: {device?.ToString() ?? "auto"}");
 
-                var trainer = new Trainer(config);
+                var trainer = new Trainer(config, device);
 
                 // Pass per-epoch callback so UI can update charts in real-time
                 var result = trainer.Train(trainDataDir, valDataDir, classNames,

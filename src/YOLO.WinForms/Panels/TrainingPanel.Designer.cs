@@ -85,8 +85,8 @@ partial class TrainingPanel
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 85F));
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32F));
-        this.tableConfig.RowCount = 12;
-        for (int i = 0; i < 12; i++)
+        this.tableConfig.RowCount = 13;
+        for (int i = 0; i < 13; i++)
             this.tableConfig.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
         this.tableConfig.Padding = new Padding(0, 4, 0, 0);
 
@@ -220,11 +220,34 @@ partial class TrainingPanel
         this.tableConfig.Controls.Add(this.txtSaveDir, 1, 8);
         this.tableConfig.SetColumnSpan(this.txtSaveDir, 2);
 
-        // --- Row 9: Cosine LR ---
+        // --- Row 9: Device ---
+        this.lblDevice = new Label();
+        this.lblDevice.Text = "Device:";
+        this.lblDevice.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblDevice.Font = new Font("Segoe UI", 9F);
+        this.lblDevice.Dock = DockStyle.Fill;
+        this.tableConfig.Controls.Add(this.lblDevice, 0, 9);
+
+        this.cboDevice = new ComboBox();
+        this.cboDevice.Dock = DockStyle.Fill;
+        this.cboDevice.DropDownStyle = ComboBoxStyle.DropDownList;
+        this.cboDevice.Font = new Font("Segoe UI", 9F);
+        this.cboDevice.Items.Add("CPU");
+        if (TorchSharp.torch.cuda.is_available())
+        {
+            int gpuCount = (int)TorchSharp.torch.cuda.device_count();
+            for (int g = 0; g < gpuCount; g++)
+                this.cboDevice.Items.Add($"CUDA:{g}");
+        }
+        this.cboDevice.SelectedIndex = this.cboDevice.Items.Count > 1 ? 1 : 0;
+        this.tableConfig.Controls.Add(this.cboDevice, 1, 9);
+        this.tableConfig.SetColumnSpan(this.cboDevice, 2);
+
+        // --- Row 10: Cosine LR ---
         this.chkCosLR.Text = "Cosine LR Schedule";
         this.chkCosLR.Font = new Font("Segoe UI", 9F);
         this.chkCosLR.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.chkCosLR, 0, 9);
+        this.tableConfig.Controls.Add(this.chkCosLR, 0, 10);
         this.tableConfig.SetColumnSpan(this.chkCosLR, 3);
 
         // panelButtons
@@ -324,6 +347,8 @@ partial class TrainingPanel
     private Label lblSaveDir;
     private TextBox txtSaveDir;
     private CheckBox chkCosLR;
+    private Label lblDevice;
+    private ComboBox cboDevice;
     private FlowLayoutPanel panelButtons;
     private Button btnStart;
     private Button btnStop;

@@ -9,6 +9,7 @@ namespace YOLO.WinForms;
 /// </summary>
 public partial class MainForm : Form
 {
+    private AnnotationPanel? annotationPanel;
     private TrainingPanel? trainingPanel;
     private ExportPanel? exportPanel;
     private InferencePanel? inferencePanel;
@@ -22,6 +23,12 @@ public partial class MainForm : Form
 
     private void InitializePanels()
     {
+        // Annotation Panel
+        annotationPanel = new AnnotationPanel();
+        annotationPanel.Dock = DockStyle.Fill;
+        annotationPanel.StatusChanged += (s, msg) => SetStatus(msg);
+        tabAnnotation.Controls.Add(annotationPanel);
+
         // Training Panel
         trainingPanel = new TrainingPanel();
         trainingPanel.Dock = DockStyle.Fill;

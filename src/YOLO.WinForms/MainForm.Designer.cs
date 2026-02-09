@@ -19,6 +19,7 @@ partial class MainForm
     {
         this.components = new System.ComponentModel.Container();
         this.tabControl = new TabControl();
+        this.tabAnnotation = new TabPage();
         this.tabTraining = new TabPage();
         this.tabExport = new TabPage();
         this.tabInference = new TabPage();
@@ -27,6 +28,7 @@ partial class MainForm
         this.lblDevice = new ToolStripStatusLabel();
 
         // tabControl
+        this.tabControl.Controls.Add(this.tabAnnotation);
         this.tabControl.Controls.Add(this.tabTraining);
         this.tabControl.Controls.Add(this.tabExport);
         this.tabControl.Controls.Add(this.tabInference);
@@ -39,12 +41,21 @@ partial class MainForm
         this.tabControl.Size = new Size(1280, 750);
         this.tabControl.TabIndex = 0;
 
+        // tabAnnotation
+        this.tabAnnotation.Location = new Point(4, 34);
+        this.tabAnnotation.Name = "tabAnnotation";
+        this.tabAnnotation.Padding = new Padding(8);
+        this.tabAnnotation.Size = new Size(1272, 712);
+        this.tabAnnotation.TabIndex = 0;
+        this.tabAnnotation.Text = "Annotation";
+        this.tabAnnotation.UseVisualStyleBackColor = true;
+
         // tabTraining
         this.tabTraining.Location = new Point(4, 34);
         this.tabTraining.Name = "tabTraining";
         this.tabTraining.Padding = new Padding(8);
         this.tabTraining.Size = new Size(1272, 712);
-        this.tabTraining.TabIndex = 0;
+        this.tabTraining.TabIndex = 1;
         this.tabTraining.Text = "Training";
         this.tabTraining.UseVisualStyleBackColor = true;
 
@@ -53,7 +64,7 @@ partial class MainForm
         this.tabExport.Name = "tabExport";
         this.tabExport.Padding = new Padding(8);
         this.tabExport.Size = new Size(1272, 712);
-        this.tabExport.TabIndex = 1;
+        this.tabExport.TabIndex = 2;
         this.tabExport.Text = "Export";
         this.tabExport.UseVisualStyleBackColor = true;
 
@@ -62,7 +73,7 @@ partial class MainForm
         this.tabInference.Name = "tabInference";
         this.tabInference.Padding = new Padding(8);
         this.tabInference.Size = new Size(1272, 712);
-        this.tabInference.TabIndex = 2;
+        this.tabInference.TabIndex = 3;
         this.tabInference.Text = "Inference";
         this.tabInference.UseVisualStyleBackColor = true;
 
@@ -105,6 +116,7 @@ partial class MainForm
     #endregion
 
     private TabControl tabControl;
+    private TabPage tabAnnotation;
     private TabPage tabTraining;
     private TabPage tabExport;
     private TabPage tabInference;

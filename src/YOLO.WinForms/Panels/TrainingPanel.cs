@@ -1,3 +1,4 @@
+using TorchSharp;
 using YOLO.Core.Abstractions;
 using YOLO.Data.Datasets;
 using YOLO.Training;
@@ -153,8 +154,22 @@ public partial class TrainingPanel : UserControl
                 SaveDir = txtSaveDir.Text
             };
 
+            // Determine device
+            torch.Device? trainDevice = null;
+            var deviceStr = cboDevice.SelectedItem?.ToString();
+            if (deviceStr != null && deviceStr.StartsWith("CUDA"))
+            {
+                var parts = deviceStr.Split(':');
+                int deviceIdx = parts.Length > 1 && int.TryParse(parts[1], out int idx) ? idx : 0;
+                trainDevice = torch.device(DeviceType.CUDA, deviceIdx);
+            }
+            else
+            {
+                trainDevice = torch.CPU;
+            }
+
             StatusChanged?.Invoke(this,
-                $"Training YOLO{config.ModelVersion}{config.ModelVariant}...");
+                $"Training YOLO{config.ModelVersion}{config.ModelVariant} on {deviceStr}...");
 
             // Redirect console output to log
             var consoleWriter = new TextBoxConsoleWriter(this, txtLog);
@@ -162,7 +177,8 @@ public partial class TrainingPanel : UserControl
             Console.SetOut(consoleWriter);
 
             var result = await trainingService.TrainAsync(
-                config, dataConfig.Train, dataConfig.Val, dataConfig.Names.ToArray());
+                config, dataConfig.Train, dataConfig.Val, dataConfig.Names.ToArray(),
+                device: trainDevice);
 
             Console.SetOut(originalOut);
 
