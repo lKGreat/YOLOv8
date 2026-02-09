@@ -15,8 +15,8 @@ public class YOLODataset
     private readonly string[] imagePaths;
     private readonly string[] labelPaths;
     private readonly int imgSize;
-    private readonly AugmentationPipeline pipeline;
-    private readonly bool useMosaic;
+    private AugmentationPipeline pipeline;
+    private bool useMosaic;
     private readonly Random rng;
     private List<BboxInstance>[]? labelCache;
 
@@ -201,11 +201,13 @@ public class YOLODataset
     }
 
     /// <summary>
-    /// Disable mosaic augmentation (for close_mosaic epochs).
+    /// Switch augmentation pipeline (used for close_mosaic epochs at end of training).
     /// </summary>
-    public void DisableMosaic()
+    /// <param name="newPipeline">The new augmentation pipeline to use</param>
+    /// <param name="useMosaic">Whether to use mosaic augmentation</param>
+    public void SetPipeline(AugmentationPipeline newPipeline, bool useMosaic = false)
     {
-        // Switch to non-mosaic pipeline would require recreating the pipeline
-        // For now, set a flag
+        this.pipeline = newPipeline;
+        this.useMosaic = useMosaic;
     }
 }

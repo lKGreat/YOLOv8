@@ -100,9 +100,13 @@ public class TaskAlignedAssigner
         // Compute target scores (soft labels based on normalized alignment metric)
         var targetScores = torch.zeros(batch, nAnchors, nc, dtype: dtype, device: device);
 
-        // Normalize alignment metric: divide by max per GT
-        var alignMax = alignMetric.amax(new long[] { -1 }, keepdim: true).clamp_min(1e-8); // (B, maxGT, 1)
-        var normAlignMetric = (alignMetric / alignMax * maskPos).amax(1); // (B, N)
+        // Normalize alignment metric matching Python tal.py:119-128
+        // pos_align_metrics: max alignment metric per GT across its assigned anchors
+        var posAlignMetrics = (alignMetric * maskPos).amax(new long[] { -1 }, keepdim: true).clamp_min(1e-8); // (B, maxGT, 1)
+        // pos_overlaps: max IoU per GT across its assigned anchors
+        var posOverlaps = (overlaps * maskPos).amax(new long[] { -1 }, keepdim: true); // (B, maxGT, 1)
+        // norm = align_metric * pos_overlaps / pos_align_metrics, then take max across GTs
+        var normAlignMetric = (alignMetric * posOverlaps / posAlignMetrics * maskPos).amax(1); // (B, N)
 
         // Scatter normalized metric to target class channels
         var fgIdx = fgMask.nonzero(); // (numFG, 2) - [batch_idx, anchor_idx]

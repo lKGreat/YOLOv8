@@ -69,6 +69,53 @@ public class DetectHead : Module<Tensor[], (Tensor boxes, Tensor scores, Tensor[
         dfl = new DFL($"{name}_dfl", regMax);
 
         RegisterComponents();
+
+        // Initialize biases matching Python Detect.bias_init()
+        BiasInit();
+    }
+
+    /// <summary>
+    /// Initialize detection head biases matching Python ultralytics Detect.bias_init().
+    /// Classification bias: log(5 / nc / (640/stride)^2)
+    /// Box bias: 1.0
+    /// </summary>
+    private void BiasInit()
+    {
+        using var _ = torch.no_grad();
+
+        for (int i = 0; i < NumDetectionLayers; i++)
+        {
+            var stride = Strides[i];
+
+            // cv2 box branch: last layer (Conv2d) bias init to 1.0
+            var cv2Modules = cv2[i].children().ToArray();
+            if (cv2Modules.Length > 0)
+            {
+                var lastConv2 = cv2Modules[^1];
+                foreach (var (pname, param) in lastConv2.named_parameters())
+                {
+                    if (pname.EndsWith("bias") && param is not null)
+                    {
+                        param.fill_(1.0);
+                    }
+                }
+            }
+
+            // cv3 class branch: last layer (Conv2d) bias init to log(5 / nc / (640/s)^2)
+            var cv3Modules = cv3[i].children().ToArray();
+            if (cv3Modules.Length > 0)
+            {
+                var lastConv3 = cv3Modules[^1];
+                foreach (var (pname, param) in lastConv3.named_parameters())
+                {
+                    if (pname.EndsWith("bias") && param is not null)
+                    {
+                        double biasVal = Math.Log(5.0 / NumClasses / Math.Pow(640.0 / stride, 2));
+                        param.fill_(biasVal);
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>

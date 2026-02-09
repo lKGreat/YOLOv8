@@ -42,7 +42,7 @@ public class ConvBlock : Module<Tensor, Tensor>
 
         conv = Conv2d(c1, c2, k, stride: s, padding: padding,
             groups: g, dilation: d, bias: false);
-        bn = BatchNorm2d(c2, eps: 1e-3, momentum: 0.03);
+        bn = BatchNorm2d(c2);
         act = useAct ? SiLU(inplace: true) : null;
 
         RegisterComponents();

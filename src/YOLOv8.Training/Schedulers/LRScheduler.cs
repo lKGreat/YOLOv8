@@ -1,4 +1,5 @@
 using TorchSharp;
+using TorchSharp.Modules;
 using static TorchSharp.torch;
 
 namespace YOLOv8.Training.Schedulers;
@@ -6,6 +7,7 @@ namespace YOLOv8.Training.Schedulers;
 /// <summary>
 /// Learning rate scheduler with warmup support.
 /// Supports linear decay and cosine annealing, matching YOLOv8 training.
+/// Includes both LR warmup and momentum warmup matching Python ultralytics.
 /// </summary>
 public class WarmupLRScheduler
 {
@@ -73,8 +75,8 @@ public class WarmupLRScheduler
     }
 
     /// <summary>
-    /// Update learning rates at the start of each iteration.
-    /// Handles warmup for the first few epochs.
+    /// Update learning rates and momentum at the start of each iteration.
+    /// Handles warmup for the first few epochs (both LR and momentum).
     /// </summary>
     /// <param name="epoch">Current epoch (0-based)</param>
     /// <param name="iteration">Current global iteration</param>
@@ -90,11 +92,15 @@ public class WarmupLRScheduler
 
             for (int j = 0; j < groups.Length; j++)
             {
-                // LR warmup: bias starts at warmupBiasLr, others start at 0
-                double startLR = (j == 0) ? warmupBiasLr : 0.0;
+                // LR warmup: bias group (last group, g2) starts at warmupBiasLr, others start at 0
+                double startLR = (j == groups.Length - 1) ? warmupBiasLr : 0.0;
                 double endLR = initialLRs[j] * GetLRFactor(epoch);
                 double newLR = Interpolate(iteration, xi0, xi1, startLR, endLR);
                 groups[j].LearningRate = newLR;
+
+                // Momentum warmup: ramp from warmupMomentum to baseMomentum
+                double newMomentum = Interpolate(iteration, xi0, xi1, warmupMomentum, baseMomentum);
+                SetMomentum(groups[j], newMomentum);
             }
         }
         else
@@ -105,6 +111,24 @@ public class WarmupLRScheduler
             {
                 groups[j].LearningRate = initialLRs[j] * factor;
             }
+        }
+    }
+
+    /// <summary>
+    /// Set momentum on optimizer param group (handles SGD momentum and Adam beta1).
+    /// </summary>
+    private static void SetMomentum(object group, double momentum)
+    {
+        // TorchSharp param groups have specific Options for each optimizer type
+        // Use pattern matching to handle SGD momentum and Adam/AdamW beta1
+        switch (group)
+        {
+            case SGD.ParamGroup sgdGroup:
+                sgdGroup.Options.momentum = momentum;
+                break;
+            case AdamW.ParamGroup adamwGroup:
+                adamwGroup.Options.beta1 = momentum;
+                break;
         }
     }
 

@@ -48,13 +48,13 @@ public class BboxLoss
         if (regMax > 1)
         {
             // Convert target bboxes to LTRB distances from anchor points
-            var targetLTRB = BboxUtils.Bbox2Dist(anchorPoints, targetBboxes, regMax - 1);
+            var targetLTRB = BboxUtils.Bbox2Dist(anchorPoints, targetBboxes, regMax);
             var fgTargetLTRB = targetLTRB[fgMask]; // (numFG, 4)
-            var fgPredDist = predDist[fgMask]; // (numFG, 4*reg_max)
+            var fgPredDist = predDist[fgMask]; // (numFG, 4*(reg_max+1))
 
             dflLoss = DFLoss(
-                fgPredDist.view(-1, regMax), // (numFG*4, reg_max)
-                fgTargetLTRB.view(-1)        // (numFG*4)
+                fgPredDist.view(-1, regMax + 1), // (numFG*4, reg_max+1)
+                fgTargetLTRB.view(-1)             // (numFG*4)
             );
             dflLoss = (dflLoss * weight.unsqueeze(-1).expand_as(fgTargetLTRB)).sum()
                        / targetScoresSum;
@@ -71,7 +71,7 @@ public class BboxLoss
     /// Distribution Focal Loss.
     /// Computes weighted cross-entropy between the two adjacent bins of the target.
     /// </summary>
-    /// <param name="predDist">Predicted distribution logits (M, reg_max)</param>
+    /// <param name="predDist">Predicted distribution logits (M, reg_max+1)</param>
     /// <param name="target">Target continuous values (M,)</param>
     /// <returns>DFL loss per element (M,)</returns>
     private Tensor DFLoss(Tensor predDist, Tensor target)
@@ -83,7 +83,7 @@ public class BboxLoss
 
         var lossL = functional.cross_entropy(predDist, tl.view(-1), reduction: Reduction.None)
             .view(tl.shape) * wl;
-        var lossR = functional.cross_entropy(predDist, tr.clamp_max(regMax - 1).view(-1), reduction: Reduction.None)
+        var lossR = functional.cross_entropy(predDist, tr.clamp_max(regMax).view(-1), reduction: Reduction.None)
             .view(tr.shape) * wr;
 
         return (lossL + lossR).mean(new long[] { -1 }, keepdim: true);

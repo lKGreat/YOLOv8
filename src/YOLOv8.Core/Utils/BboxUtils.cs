@@ -43,7 +43,7 @@ public static class BboxUtils
             var points = torch.stack([gridX, gridY], dim: -1).view(-1, 2);
             anchorPointsList.Add(points);
 
-            var strideT = torch.full(h * w, 1, stride, dtype: ScalarType.Float32, device: device);
+            var strideT = torch.full(new long[] { h * w, 1 }, stride, dtype: ScalarType.Float32, device: device);
             strideTensorList.Add(strideT);
         }
 

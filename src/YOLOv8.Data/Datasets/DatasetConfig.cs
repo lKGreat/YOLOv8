@@ -13,21 +13,33 @@ namespace YOLOv8.Data.Datasets;
 /// </summary>
 public class DatasetConfig
 {
+    [YamlMember(Alias = "path")]
     public string? Path { get; set; }
+
+    [YamlMember(Alias = "train")]
     public string Train { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "val")]
     public string Val { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "test")]
     public string? Test { get; set; }
+
+    [YamlMember(Alias = "nc")]
     public int Nc { get; set; }
+
+    [YamlMember(Alias = "names")]
     public List<string> Names { get; set; } = new();
 
     /// <summary>
     /// Load dataset config from a YAML file.
+    /// Uses underscore naming convention to match Python YOLO YAML format.
     /// </summary>
     public static DatasetConfig Load(string yamlPath)
     {
         var yaml = File.ReadAllText(yamlPath);
         var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
             .Build();
 
@@ -35,6 +47,14 @@ public class DatasetConfig
 
         // Resolve relative paths
         var basePath = config.Path ?? System.IO.Path.GetDirectoryName(yamlPath) ?? "";
+
+        // If 'path' is a relative path, resolve it relative to the YAML file location
+        if (config.Path != null && !System.IO.Path.IsPathRooted(config.Path))
+        {
+            var yamlDir = System.IO.Path.GetDirectoryName(yamlPath) ?? "";
+            basePath = System.IO.Path.GetFullPath(System.IO.Path.Combine(yamlDir, config.Path));
+        }
+
         if (!System.IO.Path.IsPathRooted(config.Train))
             config.Train = System.IO.Path.Combine(basePath, config.Train);
         if (!System.IO.Path.IsPathRooted(config.Val))

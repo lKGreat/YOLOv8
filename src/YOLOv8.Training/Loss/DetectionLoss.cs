@@ -40,7 +40,7 @@ public class DetectionLoss
         this.dflGain = dflGain;
 
         assigner = new TaskAlignedAssigner(topK: 10, alpha: 0.5, beta: 6.0);
-        bboxLoss = new BboxLoss(regMax);
+        bboxLoss = new BboxLoss(regMax - 1);
         dfl = new DFL("loss_dfl", regMax);
     }
 
