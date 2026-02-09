@@ -28,6 +28,9 @@ public sealed class YoloInfer : IDisposable
     private readonly SingleModelPipeline _pipeline;
     private readonly YoloOptions _options;
     private readonly string _modelPath;
+    private readonly bool _isOnnx;
+    private StagedBatchPipeline? _stagedPipeline;
+    private readonly object _stagedPipelineLock = new();
     private bool _disposed;
 
     /// <summary>
@@ -41,6 +44,29 @@ public sealed class YoloInfer : IDisposable
         _modelPath = modelPath;
         _options = options ?? new YoloOptions();
         _pipeline = new SingleModelPipeline(modelPath, _options);
+        _isOnnx = Path.GetExtension(modelPath).Equals(".onnx", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Lazily create the staged batch pipeline on first batch/PDF call.
+    /// Only available for ONNX models (multi-session pool requires ONNX Runtime).
+    /// </summary>
+    private StagedBatchPipeline? GetOrCreateStagedPipeline()
+    {
+        if (!_isOnnx) return null;
+
+        if (_stagedPipeline is not null) return _stagedPipeline;
+
+        lock (_stagedPipelineLock)
+        {
+            if (_stagedPipeline is not null) return _stagedPipeline;
+            _stagedPipeline = new StagedBatchPipeline(
+                _modelPath,
+                _options,
+                _options.ResolveInferenceSessions(),
+                _options.ResolvePreprocessWorkers());
+            return _stagedPipeline;
+        }
     }
 
     #region Detect (synchronous)
@@ -111,33 +137,54 @@ public sealed class YoloInfer : IDisposable
 
     /// <summary>
     /// Run detection asynchronously on a batch of image files with parallel processing.
+    /// <para>
+    /// For batches >= <see cref="YoloOptions.StagedPipelineThreshold"/> and ONNX models,
+    /// uses the three-stage pipeline with multi-session inference for maximum throughput.
+    /// Smaller batches use the simpler semaphore-based approach.
+    /// </para>
     /// </summary>
     public async Task<DetectionResult[][]> DetectBatchAsync(
         string[] imagePaths, CancellationToken ct = default)
     {
         var totalSw = Stopwatch.StartNew();
-        var results = new DetectionResult[imagePaths.Length][];
-        var semaphore = new SemaphoreSlim(_options.MaxParallelism);
 
-        var tasks = imagePaths.Select(async (path, index) =>
+        DetectionResult[][] results;
+
+        // Use the staged pipeline for larger batches on ONNX models
+        var staged = imagePaths.Length >= _options.StagedPipelineThreshold
+            ? GetOrCreateStagedPipeline()
+            : null;
+
+        if (staged is not null)
         {
-            await semaphore.WaitAsync(ct);
-            try
-            {
-                results[index] = await _pipeline.DetectAsync(path, ct);
-            }
-            catch (Exception ex)
-            {
-                InferenceLogger.LogError(_pipeline.ModelName, ex);
-                results[index] = [];
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        });
+            results = await staged.DetectBatchAsync(imagePaths, ct);
+        }
+        else
+        {
+            // Fallback: simple semaphore-based parallelism
+            results = new DetectionResult[imagePaths.Length][];
+            var semaphore = new SemaphoreSlim(_options.MaxParallelism);
 
-        await Task.WhenAll(tasks);
+            var tasks = imagePaths.Select(async (path, index) =>
+            {
+                await semaphore.WaitAsync(ct);
+                try
+                {
+                    results[index] = await _pipeline.DetectAsync(path, ct);
+                }
+                catch (Exception ex)
+                {
+                    InferenceLogger.LogError(_pipeline.ModelName, ex);
+                    results[index] = [];
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
+        }
 
         totalSw.Stop();
         InferenceLogger.LogBatchTiming(_pipeline.ModelName, imagePaths.Length, totalSw.Elapsed);
@@ -241,55 +288,89 @@ public sealed class YoloInfer : IDisposable
 
     /// <summary>
     /// Run detection on all pages of a PDF file asynchronously.
+    /// <para>
+    /// Uses parallel page rendering and the staged pipeline for maximum throughput
+    /// when processing PDFs with many pages.
+    /// </para>
     /// </summary>
     public async Task<PageResult[]> DetectPdfAsync(string pdfPath, CancellationToken ct = default)
     {
         var totalSw = Stopwatch.StartNew();
 
-        // Render PDF pages to images
+        // Render PDF pages to images (now parallelized internally)
         var renderSw = Stopwatch.StartNew();
-        var pageImages = PdfHelper.RenderPages(pdfPath, _options.PdfDpi);
+        var pageImages = PdfHelper.RenderPages(pdfPath, _options.PdfDpi,
+            _options.ResolvePreprocessWorkers());
         renderSw.Stop();
 
-        // Parallel inference on each page
+        // Run inference on all pages
         var inferSw = Stopwatch.StartNew();
-        var results = new PageResult[pageImages.Count];
-        var semaphore = new SemaphoreSlim(_options.MaxParallelism);
+        var pageCount = pageImages.Count;
 
-        var tasks = pageImages.Select(async (img, index) =>
+        // Try staged pipeline for ONNX + enough pages
+        var staged = pageCount >= _options.StagedPipelineThreshold
+            ? GetOrCreateStagedPipeline()
+            : null;
+
+        DetectionResult[][] allDetections;
+
+        if (staged is not null)
         {
-            await semaphore.WaitAsync(ct);
-            try
-            {
-                var detections = await _pipeline.DetectAsync(img, ct);
+            // Use staged pipeline — it handles preprocess/infer/postprocess overlap
+            allDetections = await staged.DetectBatchAsync(pageImages, ct);
+        }
+        else
+        {
+            // Fallback: simple semaphore-based parallelism
+            allDetections = new DetectionResult[pageCount][];
+            var semaphore = new SemaphoreSlim(_options.MaxParallelism);
 
-                byte[]? annotated = null;
-                if (_options.DrawPdfResults)
+            var tasks = pageImages.Select(async (img, index) =>
+            {
+                await semaphore.WaitAsync(ct);
+                try
                 {
-                    using var drawn = ImageDrawer.Draw(img, detections, _options.ClassNames);
-                    annotated = ImageToBytes(drawn);
+                    allDetections[index] = await _pipeline.DetectAsync(img, ct);
                 }
+                catch (Exception ex)
+                {
+                    InferenceLogger.LogError(_pipeline.ModelName, ex);
+                    allDetections[index] = [];
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
 
-                results[index] = new PageResult(index, detections, annotated);
-            }
-            catch (Exception ex)
-            {
-                InferenceLogger.LogError(_pipeline.ModelName, ex);
-                results[index] = new PageResult(index, []);
-            }
-            finally
-            {
-                semaphore.Release();
-                img.Dispose();
-            }
-        });
+            await Task.WhenAll(tasks);
+        }
 
-        await Task.WhenAll(tasks);
         inferSw.Stop();
+
+        // Build PageResult array with optional annotation
+        var results = new PageResult[pageCount];
+        for (int i = 0; i < pageCount; i++)
+        {
+            var detections = allDetections[i] ?? [];
+            byte[]? annotated = null;
+
+            if (_options.DrawPdfResults)
+            {
+                using var drawn = ImageDrawer.Draw(pageImages[i], detections, _options.ClassNames);
+                annotated = ImageToBytes(drawn);
+            }
+
+            results[i] = new PageResult(i, detections, annotated);
+        }
+
+        // Dispose page images
+        foreach (var img in pageImages)
+            img.Dispose();
 
         totalSw.Stop();
         InferenceLogger.LogPdfTiming(
-            _pipeline.ModelName, pageImages.Count,
+            _pipeline.ModelName, pageCount,
             renderSw.Elapsed, inferSw.Elapsed, totalSw.Elapsed);
 
         return results;
@@ -331,6 +412,7 @@ public sealed class YoloInfer : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _stagedPipeline?.Dispose();
         _pipeline.Dispose();
     }
 }
@@ -359,30 +441,33 @@ internal static class PdfHelper
     /// <summary>
     /// Render PDF pages to images for detection.
     /// Uses direct pixel copy from SKBitmap to Image&lt;Rgb24&gt; — avoids PNG encode/decode roundtrip.
+    /// Renders pages in parallel using <see cref="Parallel.For"/> for throughput.
     /// </summary>
-    public static List<Image<Rgb24>> RenderPages(string pdfPath, int dpi = 200)
+    public static List<Image<Rgb24>> RenderPages(string pdfPath, int dpi = 200, int maxWorkers = 0)
     {
-        var pages = new List<Image<Rgb24>>();
-
         int pageCount;
         using (var pdfStream = File.OpenRead(pdfPath))
         {
             pageCount = PDFtoImage.Conversion.GetPageCount(pdfStream);
         }
 
-        var renderOptions = new PDFtoImage.RenderOptions { Dpi = dpi };
+        if (maxWorkers <= 0)
+            maxWorkers = Math.Max(1, Environment.ProcessorCount / 2);
 
-        for (int i = 0; i < pageCount; i++)
+        var renderOptions = new PDFtoImage.RenderOptions { Dpi = dpi };
+        var pages = new Image<Rgb24>[pageCount];
+
+        Parallel.For(0, pageCount, new ParallelOptions { MaxDegreeOfParallelism = maxWorkers }, i =>
         {
+            // Each worker opens its own stream — PDFtoImage is not thread-safe on a single stream
             using var pdfStream = File.OpenRead(pdfPath);
             using var bitmap = PDFtoImage.Conversion.ToImage(pdfStream, page: new Index(i), options: renderOptions);
 
             // Direct pixel copy: SKBitmap -> Image<Rgb24> (no PNG encode/decode roundtrip)
-            var image = ConvertBitmapToImage(bitmap);
-            pages.Add(image);
-        }
+            pages[i] = ConvertBitmapToImage(bitmap);
+        });
 
-        return pages;
+        return new List<Image<Rgb24>>(pages);
     }
 
     /// <summary>

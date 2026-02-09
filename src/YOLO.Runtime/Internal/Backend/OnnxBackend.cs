@@ -1,5 +1,4 @@
 using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
 using YOLO.Runtime.Internal.Memory;
 
 namespace YOLO.Runtime.Internal.Backend;
@@ -7,11 +6,20 @@ namespace YOLO.Runtime.Internal.Backend;
 /// <summary>
 /// ONNX Runtime inference backend. Supports CPU, CUDA, TensorRT, DirectML.
 /// Thread-safe for concurrent <see cref="Run"/> calls on the same session.
+/// Uses the modern OrtValue API for reduced allocations and GC pressure.
 /// </summary>
 internal sealed class OnnxBackend : IInferenceBackend
 {
     private readonly InferenceSession _session;
-    private readonly string _inputName;
+    private readonly string[] _inputNames;
+    private readonly string[] _outputNames;
+    private readonly RunOptions _runOptions;
+
+    // Cached output metadata (populated on first run)
+    private long[]? _cachedOutputLongShape;
+    private int[]? _cachedOutputShape;
+    private int _cachedOutputLen;
+
     private bool _disposed;
 
     public string ModelPath { get; }
@@ -23,6 +31,8 @@ internal sealed class OnnxBackend : IInferenceBackend
 
         var sessionOptions = new SessionOptions();
         sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+        sessionOptions.EnableCpuMemArena = true;
+        sessionOptions.EnableMemoryPattern = true;
 
         if (options.InterOpThreads > 0)
             sessionOptions.InterOpNumThreads = options.InterOpThreads;
@@ -51,34 +61,54 @@ internal sealed class OnnxBackend : IInferenceBackend
         }
 
         _session = new InferenceSession(modelPath, sessionOptions);
-        _inputName = _session.InputNames[0];
+        _inputNames = [_session.InputNames[0]];
+        _outputNames = [_session.OutputNames[0]];
+        _runOptions = new RunOptions();
     }
 
     public (BufferHandle data, int[] shape) Run(ReadOnlySpan<float> input, int[] inputShape)
     {
-        // DenseTensor accepts ReadOnlySpan<int> directly — no int[]→long[]→int[] roundtrip
+        // Convert input shape to long[] for OrtValue API
+        var longShape = Array.ConvertAll(inputShape, i => (long)i);
+
+        // Create OrtValue wrapping the input data
         var inputArray = input.ToArray();
-        var tensor = new DenseTensor<float>(inputArray, inputShape);
+        using var inputOrtValue = OrtValue.CreateTensorValueFromMemory(
+            inputArray, longShape);
 
-        // Single-element array is cheaper than List<T> (no resizing, no wrapper)
-        var inputs = new NamedOnnxValue[]
+        // Run inference using the OrtValue API (less GC than NamedOnnxValue path)
+        using var results = _session.Run(_runOptions, _inputNames, [inputOrtValue], _outputNames);
+        var outputOrtValue = results[0];
+
+        // Extract output shape
+        var typeAndShape = outputOrtValue.GetTensorTypeAndShape();
+        var outputLongShape = typeAndShape.Shape;
+        int[] outputShape;
+        int outputLen;
+
+        // Cache the output shape on first run — YOLO models have deterministic output shapes
+        if (_cachedOutputShape is not null
+            && _cachedOutputLongShape is not null
+            && ShapeEquals(_cachedOutputLongShape, outputLongShape))
         {
-            NamedOnnxValue.CreateFromTensor(_inputName, tensor)
-        };
-
-        using var results = _session.Run(inputs);
-        var output = results[0];
-        var outputTensor = output.AsTensor<float>();
-        var outputShape = outputTensor.Dimensions.ToArray();
-
-        // Copy output into a pooled buffer (avoids per-call allocation of ~2.7MB)
-        int outputLen = 1;
-        foreach (var d in outputShape) outputLen *= d;
-        var outputHandle = TensorBufferPool.Rent(outputLen);
-        if (outputTensor is DenseTensor<float> dense)
-            dense.Buffer.Span.Slice(0, outputLen).CopyTo(outputHandle.Span);
+            outputShape = _cachedOutputShape;
+            outputLen = _cachedOutputLen;
+        }
         else
-            outputTensor.ToArray().AsSpan().CopyTo(outputHandle.Span);
+        {
+            outputShape = Array.ConvertAll(outputLongShape, s => (int)s);
+            outputLen = 1;
+            foreach (var d in outputShape) outputLen *= d;
+            _cachedOutputLongShape = outputLongShape;
+            _cachedOutputShape = outputShape;
+            _cachedOutputLen = outputLen;
+        }
+
+        // Copy output into a pooled buffer
+        var outputHandle = TensorBufferPool.Rent(outputLen);
+        outputOrtValue.GetTensorDataAsSpan<float>()
+            .Slice(0, outputLen)
+            .CopyTo(outputHandle.Span);
 
         return (outputHandle, outputShape);
     }
@@ -88,7 +118,15 @@ internal sealed class OnnxBackend : IInferenceBackend
         return Task.Run(() => Run(input.AsSpan(), inputShape), ct);
     }
 
-    private static ExecutionProviderType ResolveProvider(DeviceType device)
+    private static bool ShapeEquals(long[] a, long[] b)
+    {
+        if (a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    internal static ExecutionProviderType ResolveProvider(DeviceType device)
     {
         return device switch
         {

@@ -122,4 +122,68 @@ public sealed class YoloOptions
     /// Number of intra-op threads for ONNX Runtime. Default: 0 (auto).
     /// </summary>
     public int IntraOpThreads { get; set; }
+
+    /// <summary>
+    /// Number of ONNX inference sessions for CPU-parallel inference.
+    /// Each session is pinned to a subset of CPU cores (IntraOp threads = ProcessorCount / sessions).
+    /// <para>
+    /// Default: 0 (auto-detect). Auto chooses 1 for GPU; for CPU: ProcessorCount / 4, clamped to [1, 8].
+    /// </para>
+    /// Only takes effect for batch/PDF inference via the staged pipeline.
+    /// </summary>
+    public int InferenceSessions { get; set; }
+
+    /// <summary>
+    /// Number of preprocess worker tasks for the staged batch pipeline.
+    /// <para>
+    /// Default: 0 (auto-detect: ProcessorCount / 2, clamped to [1, 16]).
+    /// </para>
+    /// Only takes effect for batch/PDF inference via the staged pipeline.
+    /// </summary>
+    public int PreprocessWorkers { get; set; }
+
+    /// <summary>
+    /// Minimum batch size to trigger the staged pipeline.
+    /// Batches smaller than this threshold use the simple semaphore-based approach.
+    /// Default: 4.
+    /// </summary>
+    public int StagedPipelineThreshold { get; set; } = 4;
+
+    // ── Helper: resolve auto-detect values ──────────────────────────────
+
+    /// <summary>
+    /// Resolve the effective number of inference sessions.
+    /// </summary>
+    internal int ResolveInferenceSessions()
+    {
+        if (InferenceSessions > 0) return InferenceSessions;
+
+        // GPU backends handle their own parallelism — 1 session is sufficient
+        var provider = ExecutionProvider ?? ResolveEffectiveProvider();
+        if (provider is ExecutionProviderType.CUDA or ExecutionProviderType.TensorRT or ExecutionProviderType.DirectML)
+            return 1;
+
+        // CPU: divide cores into groups of ~4
+        return Math.Clamp(Environment.ProcessorCount / 4, 1, 8);
+    }
+
+    /// <summary>
+    /// Resolve the effective number of preprocess workers.
+    /// </summary>
+    internal int ResolvePreprocessWorkers()
+    {
+        if (PreprocessWorkers > 0) return PreprocessWorkers;
+        return Math.Clamp(Environment.ProcessorCount / 2, 1, 16);
+    }
+
+    private ExecutionProviderType ResolveEffectiveProvider()
+    {
+        return Device switch
+        {
+            DeviceType.Gpu => ExecutionProviderType.CUDA,
+            DeviceType.Cpu => ExecutionProviderType.CPU,
+            DeviceType.Auto => ExecutionProviderType.CPU, // safe default for auto-detection
+            _ => ExecutionProviderType.CPU
+        };
+    }
 }
