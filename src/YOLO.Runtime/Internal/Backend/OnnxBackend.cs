@@ -1,5 +1,6 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using YOLO.Runtime.Internal.Memory;
 
 namespace YOLO.Runtime.Internal.Backend;
 
@@ -53,14 +54,14 @@ internal sealed class OnnxBackend : IInferenceBackend
         _inputName = _session.InputNames[0];
     }
 
-    public (float[] data, int[] shape) Run(ReadOnlySpan<float> input, int[] inputShape)
+    public (BufferHandle data, int[] shape) Run(ReadOnlySpan<float> input, int[] inputShape)
     {
-        // Create a DenseTensor wrapping the input data
-        var longShape = Array.ConvertAll(inputShape, i => (long)i);
+        // DenseTensor accepts ReadOnlySpan<int> directly — no int[]→long[]→int[] roundtrip
         var inputArray = input.ToArray();
-        var tensor = new DenseTensor<float>(inputArray, longShape.Select(l => (int)l).ToArray());
+        var tensor = new DenseTensor<float>(inputArray, inputShape);
 
-        var inputs = new List<NamedOnnxValue>
+        // Single-element array is cheaper than List<T> (no resizing, no wrapper)
+        var inputs = new NamedOnnxValue[]
         {
             NamedOnnxValue.CreateFromTensor(_inputName, tensor)
         };
@@ -69,12 +70,20 @@ internal sealed class OnnxBackend : IInferenceBackend
         var output = results[0];
         var outputTensor = output.AsTensor<float>();
         var outputShape = outputTensor.Dimensions.ToArray();
-        var outputData = outputTensor.ToArray();
 
-        return (outputData, outputShape);
+        // Copy output into a pooled buffer (avoids per-call allocation of ~2.7MB)
+        int outputLen = 1;
+        foreach (var d in outputShape) outputLen *= d;
+        var outputHandle = TensorBufferPool.Rent(outputLen);
+        if (outputTensor is DenseTensor<float> dense)
+            dense.Buffer.Span.Slice(0, outputLen).CopyTo(outputHandle.Span);
+        else
+            outputTensor.ToArray().AsSpan().CopyTo(outputHandle.Span);
+
+        return (outputHandle, outputShape);
     }
 
-    public Task<(float[] data, int[] shape)> RunAsync(float[] input, int[] inputShape, CancellationToken ct = default)
+    public Task<(BufferHandle data, int[] shape)> RunAsync(float[] input, int[] inputShape, CancellationToken ct = default)
     {
         return Task.Run(() => Run(input.AsSpan(), inputShape), ct);
     }

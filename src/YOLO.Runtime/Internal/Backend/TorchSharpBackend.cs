@@ -1,6 +1,7 @@
 using TorchSharp;
 using YOLO.Core.Abstractions;
 using YOLO.Core.Utils;
+using YOLO.Runtime.Internal.Memory;
 using static TorchSharp.torch;
 
 namespace YOLO.Runtime.Internal.Backend;
@@ -54,7 +55,7 @@ internal sealed class TorchSharpBackend : IInferenceBackend
         }
     }
 
-    public (float[] data, int[] shape) Run(ReadOnlySpan<float> input, int[] inputShape)
+    public (BufferHandle data, int[] shape) Run(ReadOnlySpan<float> input, int[] inputShape)
     {
         using var scope = torch.NewDisposeScope();
         using var noGrad = torch.no_grad();
@@ -73,13 +74,19 @@ internal sealed class TorchSharpBackend : IInferenceBackend
         // boxes: (B, 4, N), scores: (B, nc, N)
         var combined = torch.cat([boxes, scores], dim: 1).cpu();
 
-        var outputShape = combined.shape.Select(s => (int)s).ToArray();
-        var outputData = combined.data<float>().ToArray();
+        // Array.ConvertAll instead of LINQ Select().ToArray() — avoids iterator/closure allocation
+        var outputShape = Array.ConvertAll(combined.shape, s => (int)s);
 
-        return (outputData, outputShape);
+        // Copy into pooled buffer to avoid per-call allocation
+        int outputLen = 1;
+        foreach (var d in outputShape) outputLen *= d;
+        var outputHandle = TensorBufferPool.Rent(outputLen);
+        combined.data<float>().ToArray().AsSpan(0, outputLen).CopyTo(outputHandle.Span);
+
+        return (outputHandle, outputShape);
     }
 
-    public Task<(float[] data, int[] shape)> RunAsync(float[] input, int[] inputShape, CancellationToken ct = default)
+    public Task<(BufferHandle data, int[] shape)> RunAsync(float[] input, int[] inputShape, CancellationToken ct = default)
     {
         return Task.Run(() => Run(input.AsSpan(), inputShape), ct);
     }

@@ -1,3 +1,4 @@
+using System.Buffers;
 using YOLO.Runtime.Internal.PreProcessing;
 using YOLO.Runtime.Results;
 
@@ -27,34 +28,54 @@ internal sealed class ClassificationPostProcessor : IPostProcessor
         int numClasses = shape[^1];
         string[]? classNames = options.ClassNames;
 
-        // Apply softmax to get probabilities
-        var probs = Softmax(output, numClasses);
-
-        // Sort by probability descending, return top results above threshold
-        var results = new List<ClassificationResult>();
-        var indices = Enumerable.Range(0, numClasses)
-            .OrderByDescending(i => probs[i])
-            .ToArray();
-
-        foreach (var idx in indices)
+        // Apply softmax to get probabilities (uses ArrayPool for intermediate buffer)
+        var probsArray = ArrayPool<float>.Shared.Rent(numClasses);
+        try
         {
-            if (probs[idx] < options.Confidence)
-                break;
+            Softmax(output, numClasses, probsArray);
 
-            string? className = classNames is not null && idx < classNames.Length
-                ? classNames[idx] : null;
+            // Sort indices by probability descending — no LINQ, no boxing
+            var indicesArray = ArrayPool<int>.Shared.Rent(numClasses);
+            try
+            {
+                for (int i = 0; i < numClasses; i++) indicesArray[i] = i;
+                var indicesSpan = indicesArray.AsSpan(0, numClasses);
+                var probsCapture = probsArray; // local for lambda
+                indicesSpan.Sort((a, b) => probsCapture[b].CompareTo(probsCapture[a]));
 
-            results.Add(new ClassificationResult(idx, probs[idx], className));
+                // Collect results above threshold
+                var results = new List<ClassificationResult>();
+                for (int k = 0; k < numClasses; k++)
+                {
+                    int idx = indicesSpan[k];
+                    if (probsArray[idx] < options.Confidence)
+                        break;
+
+                    string? className = classNames is not null && idx < classNames.Length
+                        ? classNames[idx] : null;
+
+                    results.Add(new ClassificationResult(idx, probsArray[idx], className));
+                }
+
+                return results.ToArray();
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(indicesArray);
+            }
         }
-
-        return results.ToArray();
+        finally
+        {
+            ArrayPool<float>.Shared.Return(probsArray);
+        }
     }
 
-    private static float[] Softmax(ReadOnlySpan<float> logits, int count)
+    /// <summary>
+    /// In-place softmax into a pre-allocated buffer.
+    /// </summary>
+    private static void Softmax(ReadOnlySpan<float> logits, int count, float[] result)
     {
-        var result = new float[count];
         float max = float.MinValue;
-
         for (int i = 0; i < count; i++)
             if (logits[i] > max) max = logits[i];
 
@@ -67,10 +88,9 @@ internal sealed class ClassificationPostProcessor : IPostProcessor
 
         if (sum > 0)
         {
+            float invSum = 1.0f / sum;
             for (int i = 0; i < count; i++)
-                result[i] /= sum;
+                result[i] *= invSum;
         }
-
-        return result;
     }
 }

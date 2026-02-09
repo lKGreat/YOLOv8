@@ -1,3 +1,4 @@
+using System.Buffers;
 using YOLO.Runtime.Internal.PreProcessing;
 using YOLO.Runtime.Results;
 
@@ -33,8 +34,9 @@ internal sealed class NmsPostProcessor : IPostProcessor
         int maxDet = options.MaxDetections;
         string[]? classNames = options.ClassNames;
 
-        // Collect candidates: transpose from (4+nc, N) to iterate by anchor
-        var candidates = new List<(float x1, float y1, float x2, float y2, float conf, int cls)>();
+        // Pre-allocate with estimated capacity (most anchors are filtered by confidence)
+        var candidates = new List<(float x1, float y1, float x2, float y2, float conf, int cls)>(
+            Math.Min(numAnchors, 2048));
 
         for (int i = 0; i < numAnchors; i++)
         {
@@ -62,10 +64,10 @@ internal sealed class NmsPostProcessor : IPostProcessor
             float h = output[3 * numAnchors + i];
 
             // Convert xywh -> xyxy
-            float x1 = cx - w / 2f;
-            float y1 = cy - h / 2f;
-            float x2 = cx + w / 2f;
-            float y2 = cy + h / 2f;
+            float x1 = cx - w * 0.5f;
+            float y1 = cy - h * 0.5f;
+            float x2 = cx + w * 0.5f;
+            float y2 = cy + h * 0.5f;
 
             candidates.Add((x1, y1, x2, y2, bestScore, bestClass));
         }
@@ -120,54 +122,66 @@ internal sealed class NmsPostProcessor : IPostProcessor
 
     /// <summary>
     /// Greedy NMS with class offset trick (per-class suppression).
+    /// Uses ArrayPool for the suppressed flags to avoid per-call allocation.
     /// </summary>
     private static List<(float x1, float y1, float x2, float y2, float conf, int cls)> GreedyNms(
         List<(float x1, float y1, float x2, float y2, float conf, int cls)> candidates,
         float iouThreshold, int maxDet, float maxWH)
     {
-        var kept = new List<(float x1, float y1, float x2, float y2, float conf, int cls)>();
-        var suppressed = new bool[candidates.Count];
+        var kept = new List<(float x1, float y1, float x2, float y2, float conf, int cls)>(
+            Math.Min(candidates.Count, maxDet));
 
-        for (int i = 0; i < candidates.Count; i++)
+        // Use ArrayPool to avoid allocating bool[] (up to 30,000) on every call
+        var suppressedArray = ArrayPool<bool>.Shared.Rent(candidates.Count);
+        Array.Clear(suppressedArray, 0, candidates.Count);
+
+        try
         {
-            if (suppressed[i]) continue;
-
-            var a = candidates[i];
-            kept.Add(a);
-
-            if (kept.Count >= maxDet)
-                break;
-
-            // Apply class offset for per-class NMS
-            float ax1 = a.x1 + a.cls * maxWH;
-            float ay1 = a.y1 + a.cls * maxWH;
-            float ax2 = a.x2 + a.cls * maxWH;
-            float ay2 = a.y2 + a.cls * maxWH;
-            float areaA = (ax2 - ax1) * (ay2 - ay1);
-
-            for (int j = i + 1; j < candidates.Count; j++)
+            for (int i = 0; i < candidates.Count; i++)
             {
-                if (suppressed[j]) continue;
+                if (suppressedArray[i]) continue;
 
-                var b = candidates[j];
-                float bx1 = b.x1 + b.cls * maxWH;
-                float by1 = b.y1 + b.cls * maxWH;
-                float bx2 = b.x2 + b.cls * maxWH;
-                float by2 = b.y2 + b.cls * maxWH;
+                var a = candidates[i];
+                kept.Add(a);
 
-                // Compute IoU
-                float interX1 = Math.Max(ax1, bx1);
-                float interY1 = Math.Max(ay1, by1);
-                float interX2 = Math.Min(ax2, bx2);
-                float interY2 = Math.Min(ay2, by2);
+                if (kept.Count >= maxDet)
+                    break;
 
-                float inter = Math.Max(0, interX2 - interX1) * Math.Max(0, interY2 - interY1);
-                float areaB = (bx2 - bx1) * (by2 - by1);
-                float iou = inter / (areaA + areaB - inter + 1e-7f);
+                // Apply class offset for per-class NMS
+                float ax1 = a.x1 + a.cls * maxWH;
+                float ay1 = a.y1 + a.cls * maxWH;
+                float ax2 = a.x2 + a.cls * maxWH;
+                float ay2 = a.y2 + a.cls * maxWH;
+                float areaA = (ax2 - ax1) * (ay2 - ay1);
 
-                if (iou > iouThreshold)
-                    suppressed[j] = true;
+                for (int j = i + 1; j < candidates.Count; j++)
+                {
+                    if (suppressedArray[j]) continue;
+
+                    var b = candidates[j];
+                    float bx1 = b.x1 + b.cls * maxWH;
+                    float by1 = b.y1 + b.cls * maxWH;
+                    float bx2 = b.x2 + b.cls * maxWH;
+                    float by2 = b.y2 + b.cls * maxWH;
+
+                    // Compute IoU
+                    float interX1 = Math.Max(ax1, bx1);
+                    float interY1 = Math.Max(ay1, by1);
+                    float interX2 = Math.Min(ax2, bx2);
+                    float interY2 = Math.Min(ay2, by2);
+
+                    float inter = Math.Max(0, interX2 - interX1) * Math.Max(0, interY2 - interY1);
+                    float areaB = (bx2 - bx1) * (by2 - by1);
+                    float iou = inter / (areaA + areaB - inter + 1e-7f);
+
+                    if (iou > iouThreshold)
+                        suppressedArray[j] = true;
+                }
             }
+        }
+        finally
+        {
+            ArrayPool<bool>.Shared.Return(suppressedArray);
         }
 
         return kept;

@@ -21,7 +21,7 @@ internal sealed class V10PostProcessor : IPostProcessor
         float confThreshold = options.Confidence;
         string[]? classNames = options.ClassNames;
 
-        var results = new List<DetectionResult>();
+        var results = new List<DetectionResult>(Math.Min(numDets, options.MaxDetections));
 
         for (int i = 0; i < numDets; i++)
         {

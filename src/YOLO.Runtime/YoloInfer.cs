@@ -152,37 +152,40 @@ public sealed class YoloInfer : IDisposable
     /// <summary>
     /// Run detection and draw results on the original image.
     /// Returns PNG-encoded bytes of the annotated image.
+    /// Loads the image once — used for both inference and drawing.
     /// </summary>
     /// <param name="imagePath">Path to the image file.</param>
     /// <returns>PNG bytes of the annotated image.</returns>
     public byte[] DetectAndDraw(string imagePath)
     {
-        var detections = _pipeline.Detect(imagePath);
         using var image = Image.Load<Rgb24>(imagePath);
+        var detections = _pipeline.Detect(image);
         using var annotated = ImageDrawer.Draw(image, detections, _options.ClassNames);
         return ImageToBytes(annotated);
     }
 
     /// <summary>
     /// Run detection and draw results on the original image from byte array.
+    /// Loads the image once — used for both inference and drawing.
     /// </summary>
     public byte[] DetectAndDraw(byte[] imageBytes)
     {
-        var detections = _pipeline.Detect(imageBytes.AsSpan());
         using var image = Image.Load<Rgb24>(imageBytes);
+        var detections = _pipeline.Detect(image);
         using var annotated = ImageDrawer.Draw(image, detections, _options.ClassNames);
         return ImageToBytes(annotated);
     }
 
     /// <summary>
     /// Run detection and return both structured results and annotated image bytes.
+    /// Loads the image once — used for both inference and drawing.
     /// </summary>
     /// <param name="imagePath">Path to the image file.</param>
     /// <returns>Tuple of (detections, annotated PNG bytes).</returns>
     public (DetectionResult[] Detections, byte[] AnnotatedImage) DetectAndDrawDetailed(string imagePath)
     {
-        var detections = _pipeline.Detect(imagePath);
         using var image = Image.Load<Rgb24>(imagePath);
+        var detections = _pipeline.Detect(image);
         using var annotated = ImageDrawer.Draw(image, detections, _options.ClassNames);
         return (detections, ImageToBytes(annotated));
     }
@@ -312,10 +315,15 @@ public sealed class YoloInfer : IDisposable
     /// </summary>
     public string ModelName => _pipeline.ModelName;
 
+    /// <summary>Cached stateless PngEncoder — avoids allocation per call.</summary>
+    private static readonly PngEncoder SharedPngEncoder = new();
+
     private static byte[] ImageToBytes(Image<Rgb24> image)
     {
-        using var ms = new MemoryStream();
-        image.Save(ms, new PngEncoder());
+        // Pre-estimate capacity: uncompressed RGB is W*H*3; PNG compresses ~50-70%
+        int estimatedSize = image.Width * image.Height;
+        using var ms = new MemoryStream(estimatedSize);
+        image.Save(ms, SharedPngEncoder);
         return ms.ToArray();
     }
 
@@ -350,6 +358,7 @@ internal static class PdfHelper
 
     /// <summary>
     /// Render PDF pages to images for detection.
+    /// Uses direct pixel copy from SKBitmap to Image&lt;Rgb24&gt; — avoids PNG encode/decode roundtrip.
     /// </summary>
     public static List<Image<Rgb24>> RenderPages(string pdfPath, int dpi = 200)
     {
@@ -368,14 +377,57 @@ internal static class PdfHelper
             using var pdfStream = File.OpenRead(pdfPath);
             using var bitmap = PDFtoImage.Conversion.ToImage(pdfStream, page: new Index(i), options: renderOptions);
 
-            using var skImage = SkiaSharp.SKImage.FromBitmap(bitmap);
-            using var encoded = skImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
-            using var ms = new MemoryStream(encoded.ToArray());
-            var image = Image.Load<Rgb24>(ms);
+            // Direct pixel copy: SKBitmap -> Image<Rgb24> (no PNG encode/decode roundtrip)
+            var image = ConvertBitmapToImage(bitmap);
             pages.Add(image);
         }
 
         return pages;
+    }
+
+    /// <summary>
+    /// Convert an SKBitmap to an ImageSharp Image&lt;Rgb24&gt; via direct pixel copy.
+    /// Handles both BGRA (Windows) and RGBA (Linux/macOS) pixel formats.
+    /// </summary>
+    private static Image<Rgb24> ConvertBitmapToImage(SkiaSharp.SKBitmap bitmap)
+    {
+        int width = bitmap.Width;
+        int height = bitmap.Height;
+        int bytesPerRow = bitmap.RowBytes;
+        bool isBgra = bitmap.ColorType == SkiaSharp.SKColorType.Bgra8888;
+
+        // Copy raw pixels into managed buffer (single flat copy, vastly faster than PNG encode/decode)
+        int totalBytes = height * bytesPerRow;
+        var pixelBytes = System.Buffers.ArrayPool<byte>.Shared.Rent(totalBytes);
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(bitmap.GetPixels(), pixelBytes, 0, totalBytes);
+
+            var image = new Image<Rgb24>(width, height);
+            image.ProcessPixelRows(accessor =>
+            {
+                for (int y = 0; y < height; y++)
+                {
+                    int srcRowStart = y * bytesPerRow;
+                    var dstRow = accessor.GetRowSpan(y);
+
+                    for (int x = 0; x < width; x++)
+                    {
+                        int s = srcRowStart + x * 4;
+                        if (isBgra)
+                            dstRow[x] = new Rgb24(pixelBytes[s + 2], pixelBytes[s + 1], pixelBytes[s]);
+                        else
+                            dstRow[x] = new Rgb24(pixelBytes[s], pixelBytes[s + 1], pixelBytes[s + 2]);
+                    }
+                }
+            });
+
+            return image;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(pixelBytes);
+        }
     }
 
     /// <summary>
