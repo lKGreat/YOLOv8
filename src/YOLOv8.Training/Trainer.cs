@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using TorchSharp;
 using YOLOv8.Core.Models;
+using YOLOv8.Core.Utils;
 using YOLOv8.Data.Augmentation;
 using YOLOv8.Data.Datasets;
 using YOLOv8.Inference;
@@ -204,7 +205,14 @@ public class Trainer
             Console.WriteLine($"  Temp:    {config.DistillTemperature}");
 
             teacher = new YOLOv8Model("teacher", config.NumClasses, config.TeacherVariant, device);
-            teacher.load(config.TeacherModelPath!);
+
+            // Smart load: auto-detects Python PyTorch or TorchSharp format
+            var loadResult = WeightLoader.SmartLoad(teacher, config.TeacherModelPath!);
+            if (loadResult.MissingCount > 0)
+            {
+                Console.WriteLine($"  Warning: {loadResult.MissingCount} parameters not loaded from checkpoint");
+            }
+
             teacher.eval();
 
             // Freeze all teacher parameters

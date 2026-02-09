@@ -1,5 +1,6 @@
 using TorchSharp;
 using YOLOv8.Core.Models;
+using YOLOv8.Core.Utils;
 using YOLOv8.Data.Datasets;
 using YOLOv8.Inference;
 using YOLOv8.Inference.Metrics;
@@ -227,8 +228,7 @@ public static class Program
         using var model = new YOLOv8Model("yolov8", nc, variant, device);
         if (File.Exists(modelPath))
         {
-            model.load(modelPath);
-            Console.WriteLine("  Model weights loaded.");
+            WeightLoader.SmartLoad(model, modelPath);
         }
 
         using var predictor = new Predictor(model, imgSize, conf, iou, maxDet, device);
@@ -312,8 +312,7 @@ public static class Program
         using var model = new YOLOv8Model("yolov8", dataConfig.Nc, variant, device);
         if (File.Exists(modelPath))
         {
-            model.load(modelPath);
-            Console.WriteLine("  Model weights loaded.");
+            WeightLoader.SmartLoad(model, modelPath);
         }
         model.eval();
 
@@ -564,7 +563,7 @@ public static class Program
         Console.WriteLine("  --name <name>        Experiment name (default: exp)");
         Console.WriteLine();
         Console.WriteLine("Distillation options (use with train):");
-        Console.WriteLine("  --teacher <path>           Path to pretrained teacher model weights (.pt)");
+        Console.WriteLine("  --teacher <path>           Teacher weights: Python ultralytics .pt or TorchSharp .pt");
         Console.WriteLine("  --teacher_variant <v>      Teacher architecture variant: n/s/m/l/x (default: l)");
         Console.WriteLine("  --distill_weight <n>       Distillation loss weight alpha (default: 1.0)");
         Console.WriteLine("  --distill_temp <n>         Temperature for soft targets (default: 20)");
@@ -602,7 +601,7 @@ public static class Program
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100");
-        Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --teacher best.pt --teacher_variant l");
+        Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --teacher yolov8s.pt --teacher_variant s");
         Console.WriteLine("  dotnet run -- bench --data coco128.yaml --models n,s --epochs 50 --seed 42");
         Console.WriteLine("  dotnet run -- predict --model runs/train/exp/weights/best.pt --source image.jpg");
         Console.WriteLine("  dotnet run -- val --data coco128.yaml --model runs/train/exp/weights/best.pt");
