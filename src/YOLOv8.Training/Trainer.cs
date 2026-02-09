@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TorchSharp;
 using YOLOv8.Core.Models;
 using YOLOv8.Data.Augmentation;
@@ -47,6 +48,23 @@ public record TrainConfig
     public float Scale { get; init; } = 0.5f;
     public float Translate { get; init; } = 0.1f;
     public string SaveDir { get; init; } = "runs/train";
+    public int Seed { get; init; } = 0;
+}
+
+/// <summary>
+/// Training result containing best metrics and timing.
+/// </summary>
+public record TrainResult
+{
+    public string ModelVariant { get; init; } = "";
+    public long ParamCount { get; init; }
+    public int BestEpoch { get; init; }
+    public double BestFitness { get; init; }
+    public double BestMap50 { get; init; }
+    public double BestMap5095 { get; init; }
+    public TimeSpan TrainingTime { get; init; }
+    public double[] PerClassAP50 { get; init; } = Array.Empty<double>();
+    public string[] ClassNames { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -57,9 +75,10 @@ public record TrainConfig
 ///   - Gradient accumulation, clipping, and optimizer step
 ///   - EMA parameter tracking
 ///   - LR warmup and scheduling (including momentum warmup)
-///   - Validation after each epoch with mAP for best-model selection
+///   - Validation after each epoch with mAP + fitness for best-model selection
 ///   - Early stopping
 ///   - Mosaic close (disable mosaic in last N epochs)
+///   - Metrics CSV logging
 /// </summary>
 public class Trainer
 {
@@ -73,12 +92,31 @@ public class Trainer
     }
 
     /// <summary>
+    /// Compute ultralytics fitness score: 0.1 * mAP50 + 0.9 * mAP50-95
+    /// </summary>
+    public static double ComputeFitness(double map50, double map5095)
+        => 0.1 * map50 + 0.9 * map5095;
+
+    /// <summary>
     /// Run the full training loop.
     /// </summary>
     /// <param name="trainDataDir">Training images directory</param>
     /// <param name="valDataDir">Validation images directory (optional)</param>
-    public void Train(string trainDataDir, string? valDataDir = null)
+    /// <param name="classNames">Optional class names for per-class AP display</param>
+    /// <returns>TrainResult with best metrics</returns>
+    public TrainResult Train(string trainDataDir, string? valDataDir = null, string[]? classNames = null)
     {
+        var sw = Stopwatch.StartNew();
+
+        // Set seed for reproducibility
+        if (config.Seed > 0)
+        {
+            torch.manual_seed(config.Seed);
+            if (torch.cuda.is_available())
+                torch.cuda.manual_seed(config.Seed);
+            Console.WriteLine($"Random seed: {config.Seed}");
+        }
+
         Console.WriteLine($"Training on device: {device}");
         Console.WriteLine($"Model: YOLOv8{config.ModelVariant}, Classes: {config.NumClasses}");
         Console.WriteLine($"Epochs: {config.Epochs}, BatchSize: {config.BatchSize}, ImgSize: {config.ImgSize}");
@@ -91,13 +129,16 @@ public class Trainer
         long totalParams = model.parameters().Sum(p => p.numel());
         Console.WriteLine($"Total parameters: {totalParams:N0}");
 
+        // Create metrics logger
+        using var logger = new TrainingMetricsLogger(config.SaveDir);
+        logger.SaveArgs(config.ModelVariant, totalParams, config);
+
         // Create augmentation pipelines
         var trainPipeline = AugmentationPipeline.CreateTrainPipeline(
             config.ImgSize, config.MosaicProb, config.MixUpProb,
             config.HsvH, config.HsvS, config.HsvV,
             config.FlipLR, config.FlipUD, config.Scale, config.Translate);
 
-        // Create the no-mosaic pipeline for close_mosaic epochs
         var noMosaicPipeline = trainPipeline.WithoutMosaic();
 
         // Create dataset
@@ -122,15 +163,8 @@ public class Trainer
 
         // Create optimizer with 3-group parameter separation
         var optimizer = OptimizerFactory.Create(
-            model,
-            config.Optimizer,
-            config.Lr0,
-            config.Momentum,
-            config.WeightDecay,
-            config.BatchSize,
-            accumulate,
-            config.Nbs,
-            config.NumClasses,
+            model, config.Optimizer, config.Lr0, config.Momentum, config.WeightDecay,
+            config.BatchSize, accumulate, config.Nbs, config.NumClasses,
             (long)batchesPerEpoch * config.Epochs);
 
         // Create scheduler with momentum warmup
@@ -147,14 +181,24 @@ public class Trainer
 
         // Training loop
         int globalIter = 0;
-        double bestMap = 0;
+        double bestFitness = 0;
+        double bestMap50 = 0;
+        double bestMap5095 = 0;
+        int bestEpoch = 0;
         double bestLoss = double.MaxValue;
         int patienceCounter = 0;
         bool mosaicClosed = false;
+        double[] bestPerClassAP50 = Array.Empty<double>();
 
         // Create save directory
         var weightsDir = Path.Combine(config.SaveDir, "weights");
         Directory.CreateDirectory(weightsDir);
+
+        // Print header
+        Console.WriteLine();
+        Console.WriteLine($"{"Epoch",>8} {"box",>10} {"cls",>10} {"dfl",>10} " +
+            $"{"mAP50",>10} {"mAP50-95",>10} {"fitness",>10}");
+        Console.WriteLine(new string('-', 72));
 
         for (int epoch = 0; epoch < config.Epochs; epoch++)
         {
@@ -179,42 +223,30 @@ public class Trainer
 
                 globalIter++;
 
-                // Move to device
                 var imgs = images.to(device);
                 var gtBoxes = gtBboxes.to(device);
                 var gtLbls = gtLabels.to(device);
                 var mask = maskGT.to(device);
 
-                // Update LR and momentum
                 scheduler.Step(epoch, globalIter);
 
-                // Forward pass
                 var (rawBox, rawCls, featureSizes) = model.ForwardTrain(imgs);
 
-                // Compute loss
                 var (totalLoss, lossItems) = loss.Compute(
                     rawBox, rawCls, featureSizes,
                     gtLbls, gtBoxes, mask, config.ImgSize);
 
-                // Backward
                 totalLoss.backward();
 
-                // Optimizer step (with accumulation)
                 if (globalIter - lastOptStep >= accumulate)
                 {
-                    // Gradient clipping
                     torch.nn.utils.clip_grad_norm_(model.parameters(), config.MaxGradNorm);
-
                     optimizer.step();
                     optimizer.zero_grad();
-
-                    // EMA update (includes buffers)
                     ema.Update(model);
-
                     lastOptStep = globalIter;
                 }
 
-                // Track losses
                 epochBoxLoss += lossItems[0].item<float>();
                 epochClsLoss += lossItems[1].item<float>();
                 epochDflLoss += lossItems[2].item<float>();
@@ -222,80 +254,146 @@ public class Trainer
 
                 if (batchCount % 10 == 0 || batchCount == batchesPerEpoch)
                 {
-                    Console.Write($"\rEpoch {epoch + 1}/{config.Epochs} " +
-                        $"[{batchCount}/{batchesPerEpoch}] " +
-                        $"box: {epochBoxLoss / batchCount:F4} " +
-                        $"cls: {epochClsLoss / batchCount:F4} " +
-                        $"dfl: {epochDflLoss / batchCount:F4}");
+                    Console.Write($"\r{epoch + 1,>5}/{config.Epochs,-3} " +
+                        $"{epochBoxLoss / batchCount,10:F4} " +
+                        $"{epochClsLoss / batchCount,10:F4} " +
+                        $"{epochDflLoss / batchCount,10:F4} " +
+                        $"[{batchCount}/{batchesPerEpoch}]         ");
                 }
             }
 
-            Console.WriteLine();
+            double avgBox = epochBoxLoss / Math.Max(batchCount, 1);
+            double avgCls = epochClsLoss / Math.Max(batchCount, 1);
+            double avgDfl = epochDflLoss / Math.Max(batchCount, 1);
+            double avgLoss = avgBox + avgCls + avgDfl;
 
-            // Epoch summary
-            double avgLoss = (epochBoxLoss + epochClsLoss + epochDflLoss) / Math.Max(batchCount, 1);
-            Console.WriteLine($"  Epoch {epoch + 1} complete - " +
-                $"avg box: {epochBoxLoss / Math.Max(batchCount, 1):F4}, " +
-                $"avg cls: {epochClsLoss / Math.Max(batchCount, 1):F4}, " +
-                $"avg dfl: {epochDflLoss / Math.Max(batchCount, 1):F4}");
-
-            // === Validation ===
-            double currentMap50 = 0;
+            // Validation
+            double currentMap50 = 0, currentMap5095 = 0;
+            double[] perClassAP50 = Array.Empty<double>();
             if (valDataset != null)
             {
-                currentMap50 = Validate(model, ema, valDataset, config.NumClasses, config.ImgSize);
-                Console.WriteLine($"  Val mAP@0.5: {currentMap50:F4}");
+                (currentMap50, currentMap5095, perClassAP50) = Validate(model, ema, valDataset,
+                    config.NumClasses, config.ImgSize);
             }
 
-            // Best model selection: prefer mAP if validation available, fallback to loss
+            double fitness = ComputeFitness(currentMap50, currentMap5095);
+
+            // Get current LR from optimizer
+            double currentLr = optimizer.ParamGroups.First().LearningRate;
+
+            // Log to CSV
+            logger.LogEpoch(epoch + 1, avgBox, avgCls, avgDfl,
+                currentMap50, currentMap5095, fitness, currentLr);
+
+            // Print epoch line
+            Console.Write($"\r{epoch + 1,>5}/{config.Epochs,-3} " +
+                $"{avgBox,10:F4} {avgCls,10:F4} {avgDfl,10:F4} " +
+                $"{currentMap50,10:F4} {currentMap5095,10:F4} {fitness,10:F4}");
+
+            // Best model selection by fitness (or loss if no val)
             bool isBest;
             if (valDataset != null)
             {
-                isBest = currentMap50 > bestMap;
-                if (isBest) bestMap = currentMap50;
+                isBest = fitness > bestFitness;
+                if (isBest)
+                {
+                    bestFitness = fitness;
+                    bestMap50 = currentMap50;
+                    bestMap5095 = currentMap5095;
+                    bestEpoch = epoch + 1;
+                    bestPerClassAP50 = perClassAP50;
+                }
             }
             else
             {
                 isBest = avgLoss < bestLoss;
-                if (isBest) bestLoss = avgLoss;
+                if (isBest)
+                {
+                    bestLoss = avgLoss;
+                    bestEpoch = epoch + 1;
+                }
             }
 
             if (isBest)
             {
                 patienceCounter = 0;
-
-                // Apply EMA parameters and save best model
                 ema.ApplyTo(model);
                 model.save(Path.Combine(weightsDir, "best.pt"));
-                Console.WriteLine($"  Saved best model" +
-                    (valDataset != null ? $" (mAP@0.5: {bestMap:F4})" : $" (loss: {bestLoss:F4})"));
+                Console.Write(" *");
             }
             else
             {
                 patienceCounter++;
-                if (patienceCounter >= config.Patience)
-                {
-                    Console.WriteLine($"  Early stopping after {epoch + 1} epochs");
-                    break;
-                }
             }
 
-            // Save last model (with EMA)
+            Console.WriteLine();
+
+            if (patienceCounter >= config.Patience)
+            {
+                Console.WriteLine($"  Early stopping after {epoch + 1} epochs (patience={config.Patience})");
+                break;
+            }
+
+            // Save last model
             ema.ApplyTo(model);
             model.save(Path.Combine(weightsDir, "last.pt"));
         }
 
-        Console.WriteLine("Training complete!");
-        Console.WriteLine($"Results saved to {config.SaveDir}");
+        sw.Stop();
+
+        // Print training summary
+        Console.WriteLine(new string('-', 72));
+        Console.WriteLine();
+
+        // Print per-class AP if available
+        if (bestPerClassAP50.Length > 0 && classNames != null && classNames.Length > 0)
+        {
+            Console.WriteLine("=== Per-Class AP@0.5 (best epoch) ===");
+            for (int c = 0; c < Math.Min(bestPerClassAP50.Length, classNames.Length); c++)
+            {
+                if (bestPerClassAP50[c] > 0 || c < config.NumClasses)
+                {
+                    Console.WriteLine($"  {classNames[c],-20} {bestPerClassAP50[c]:F4}");
+                }
+            }
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("=== Training Summary ===");
+        Console.WriteLine($"  Model:         YOLOv8{config.ModelVariant}");
+        Console.WriteLine($"  Parameters:    {totalParams:N0}");
+        Console.WriteLine($"  Best epoch:    {bestEpoch}");
+        Console.WriteLine($"  Best fitness:  {bestFitness:F4}");
+        Console.WriteLine($"  Best mAP@0.5:  {bestMap50:F4}");
+        Console.WriteLine($"  Best mAP50-95: {bestMap5095:F4}");
+        Console.WriteLine($"  Training time: {sw.Elapsed:hh\\:mm\\:ss}");
+        Console.WriteLine($"  Results:       {config.SaveDir}");
+        Console.WriteLine();
+
+        // Print history table
+        logger.PrintSummary();
+
+        return new TrainResult
+        {
+            ModelVariant = config.ModelVariant,
+            ParamCount = totalParams,
+            BestEpoch = bestEpoch,
+            BestFitness = bestFitness,
+            BestMap50 = bestMap50,
+            BestMap5095 = bestMap5095,
+            TrainingTime = sw.Elapsed,
+            PerClassAP50 = bestPerClassAP50,
+            ClassNames = classNames ?? Array.Empty<string>()
+        };
     }
 
     /// <summary>
     /// Run validation and compute mAP.
     /// </summary>
-    private double Validate(YOLOv8Model model, ModelEMA ema, YOLODataset valDataset,
+    private (double map50, double map5095, double[] perClassAP50) Validate(
+        YOLOv8Model model, ModelEMA ema, YOLODataset valDataset,
         int numClasses, int imgSize)
     {
-        // Apply EMA parameters for evaluation
         ema.ApplyTo(model);
         model.eval();
 
@@ -311,42 +409,29 @@ public class Trainer
                 var imgs = images.to(device);
                 var (boxes, scores, _) = model.forward(imgs);
 
-                // boxes: (B, 4, N) in xywh format scaled by stride
-                // scores: (B, nc, N) after sigmoid
                 long batch = boxes.shape[0];
 
                 for (long b = 0; b < batch; b++)
                 {
-                    // Get predictions for this image
-                    var imgBoxes = boxes[b]; // (4, N)
-                    var imgScores = scores[b]; // (nc, N)
+                    var boxesT = boxes[b].T;
+                    var scoresT = scores[b].T;
 
-                    // Transpose to (N, 4) and (N, nc)
-                    var boxesT = imgBoxes.T; // (N, 4)
-                    var scoresT = imgScores.T; // (N, nc)
+                    var (maxScores, maxClasses) = scoresT.max(dim: -1);
 
-                    // Get max class score and class id per anchor
-                    var (maxScores, maxClasses) = scoresT.max(dim: -1); // (N,), (N,)
-
-                    // Filter by confidence
                     var confMask = maxScores > 0.001;
-                    var filteredBoxes = boxesT[confMask]; // (M, 4) xywh
-                    var filteredScores = maxScores[confMask]; // (M,)
-                    var filteredClasses = maxClasses[confMask]; // (M,)
+                    var filteredBoxes = boxesT[confMask];
+                    var filteredScores = maxScores[confMask];
+                    var filteredClasses = maxClasses[confMask];
 
-                    // Convert xywh to xyxy for metric
                     var predBoxesXyxy = Core.Utils.BboxUtils.Xywh2Xyxy(filteredBoxes);
 
-                    // Get GT for this image
                     var gtMask = maskGT[b, .., 0].to(ScalarType.Bool);
-                    var gtBoxesImg = gtBboxes[b][gtMask]; // (K, 4) xyxy normalized
-                    var gtLabelsImg = gtLabels[b][gtMask]; // (K, 1)
+                    var gtBoxesImg = gtBboxes[b][gtMask];
+                    var gtLabelsImg = gtLabels[b][gtMask];
 
-                    // Scale GT to pixel coordinates
                     gtBoxesImg = gtBoxesImg * imgSize;
                     var gtClassesImg = gtLabelsImg[.., 0].to(ScalarType.Int64);
 
-                    // Convert to arrays for metric
                     int numPred = (int)predBoxesXyxy.shape[0];
                     int numGT = (int)gtBoxesImg.shape[0];
 
@@ -393,12 +478,10 @@ public class Trainer
             }
         }
 
-        var (map50, map5095, _) = metric.Compute();
-        Console.WriteLine($"  Val mAP@0.5:0.95: {map5095:F4}");
+        var (map50, map5095, perClassAP50) = metric.Compute();
 
-        // Restore model to train mode (caller will set again if needed)
         model.train();
 
-        return map50;
+        return (map50, map5095, perClassAP50);
     }
 }

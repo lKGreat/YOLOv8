@@ -14,6 +14,7 @@ namespace YOLOv8.App;
 /// 
 /// Usage:
 ///   dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100
+///   dotnet run -- bench --data coco128.yaml --models n,s,m --epochs 50
 ///   dotnet run -- predict --model best.pt --source image.jpg [--conf 0.25] [--iou 0.45]
 ///   dotnet run -- val --data coco128.yaml --model best.pt
 /// </summary>
@@ -40,6 +41,7 @@ public static class Program
             return command switch
             {
                 "train" => RunTrain(options),
+                "bench" or "benchmark" => RunBenchmark(options),
                 "predict" or "detect" => RunPredict(options),
                 "val" or "validate" => RunValidate(options),
                 "export" => RunExport(options),
@@ -61,14 +63,10 @@ public static class Program
     /// </summary>
     private static int RunTrain(Dictionary<string, string> options)
     {
-        // Parse required options
         string dataPath = GetRequired(options, "data", "Dataset YAML path is required (--data)");
         string modelVariant = options.GetValueOrDefault("model", "yolov8n");
-
-        // Extract variant letter from model name (e.g., "yolov8n" -> "n")
         string variant = ExtractVariant(modelVariant);
 
-        // Parse optional options
         int epochs = int.Parse(options.GetValueOrDefault("epochs", "100"));
         int batchSize = int.Parse(options.GetValueOrDefault("batch", "16"));
         int imgSize = int.Parse(options.GetValueOrDefault("imgsz", "640"));
@@ -78,6 +76,7 @@ public static class Program
         string optimizer = options.GetValueOrDefault("optimizer", "auto");
         double lr0 = double.Parse(options.GetValueOrDefault("lr0", "0.01"));
         bool cosLr = options.ContainsKey("cos_lr");
+        int seed = int.Parse(options.GetValueOrDefault("seed", "0"));
 
         // Load dataset config
         Console.WriteLine($"Loading dataset config: {dataPath}");
@@ -108,7 +107,8 @@ public static class Program
                 Optimizer = optimizer,
                 Lr0 = lr0,
                 CosLR = cosLr,
-                SaveDir = Path.Combine(saveDir, name)
+                SaveDir = Path.Combine(saveDir, name),
+                Seed = seed
             };
         }
 
@@ -119,13 +119,67 @@ public static class Program
             trainConfig = trainConfig with { BatchSize = batchSize };
         if (options.ContainsKey("imgsz"))
             trainConfig = trainConfig with { ImgSize = imgSize };
+        if (options.ContainsKey("seed"))
+            trainConfig = trainConfig with { Seed = seed };
 
-        // Determine device
         var device = GetDevice(options);
 
-        // Run training
         var trainer = new Trainer(trainConfig, device);
-        trainer.Train(dataConfig.Train, dataConfig.Val);
+        trainer.Train(dataConfig.Train, dataConfig.Val, dataConfig.Names.ToArray());
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Run multi-variant benchmark command.
+    /// </summary>
+    private static int RunBenchmark(Dictionary<string, string> options)
+    {
+        string dataPath = GetRequired(options, "data", "Dataset YAML path is required (--data)");
+        string modelsStr = options.GetValueOrDefault("models", "n,s,m,l,x");
+
+        int epochs = int.Parse(options.GetValueOrDefault("epochs", "100"));
+        int batchSize = int.Parse(options.GetValueOrDefault("batch", "16"));
+        int imgSize = int.Parse(options.GetValueOrDefault("imgsz", "640"));
+        string saveDir = options.GetValueOrDefault("project", "runs/bench");
+        string name = options.GetValueOrDefault("name", "exp");
+        string optimizer = options.GetValueOrDefault("optimizer", "auto");
+        double lr0 = double.Parse(options.GetValueOrDefault("lr0", "0.01"));
+        bool cosLr = options.ContainsKey("cos_lr");
+        int seed = int.Parse(options.GetValueOrDefault("seed", "0"));
+
+        // Parse variant list
+        var variants = modelsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(v => ExtractVariant(v))
+            .ToArray();
+
+        // Load dataset config
+        Console.WriteLine($"Loading dataset config: {dataPath}");
+        var dataConfig = DatasetConfig.Load(dataPath);
+        Console.WriteLine($"  Classes: {dataConfig.Nc} ({string.Join(", ", dataConfig.Names.Take(5))}" +
+            (dataConfig.Names.Count > 5 ? $"... +{dataConfig.Names.Count - 5} more" : "") + ")");
+        Console.WriteLine($"  Train: {dataConfig.Train}");
+        Console.WriteLine($"  Val: {dataConfig.Val}");
+        Console.WriteLine();
+
+        var baseConfig = new TrainConfig
+        {
+            Epochs = epochs,
+            BatchSize = batchSize,
+            ImgSize = imgSize,
+            NumClasses = dataConfig.Nc,
+            Optimizer = optimizer,
+            Lr0 = lr0,
+            CosLR = cosLr,
+            SaveDir = Path.Combine(saveDir, name),
+            Seed = seed
+        };
+
+        var device = GetDevice(options);
+
+        var runner = new BenchmarkRunner(baseConfig, dataConfig.Train, dataConfig.Val,
+            dataConfig.Names.ToArray(), device);
+        runner.Run(variants);
 
         return 0;
     }
@@ -149,7 +203,6 @@ public static class Program
 
         Console.WriteLine($"Loading model: {modelPath}");
 
-        // Create model and load weights
         using var model = new YOLOv8Model("yolov8", nc, variant, device);
         if (File.Exists(modelPath))
         {
@@ -159,7 +212,6 @@ public static class Program
 
         using var predictor = new Predictor(model, imgSize, conf, iou, maxDet, device);
 
-        // Handle single file or directory
         var imageFiles = new List<string>();
         if (File.Exists(source))
         {
@@ -224,7 +276,6 @@ public static class Program
 
         var device = GetDevice(options);
 
-        // Load dataset config
         Console.WriteLine($"Loading dataset config: {dataPath}");
         var dataConfig = DatasetConfig.Load(dataPath);
         Console.WriteLine($"  Classes: {dataConfig.Nc}");
@@ -236,7 +287,6 @@ public static class Program
             return 1;
         }
 
-        // Create model and load weights
         Console.WriteLine($"Loading model: {modelPath}");
         using var model = new YOLOv8Model("yolov8", dataConfig.Nc, variant, device);
         if (File.Exists(modelPath))
@@ -246,13 +296,11 @@ public static class Program
         }
         model.eval();
 
-        // Create validation dataset
         var valPipeline = YOLOv8.Data.Augmentation.AugmentationPipeline.CreateValPipeline(imgSize);
         var valDataset = new YOLODataset(dataConfig.Val, imgSize, valPipeline, useMosaic: false);
         valDataset.CacheLabels();
         Console.WriteLine($"  Validation samples: {valDataset.Count}");
 
-        // Run validation
         var metric = new MAPMetric(dataConfig.Nc);
 
         Console.WriteLine("Running validation...");
@@ -271,9 +319,8 @@ public static class Program
                 long batch = boxes.shape[0];
                 for (long b = 0; b < batch; b++)
                 {
-                    // Get predictions
-                    var boxesT = boxes[b].T;    // (N, 4)
-                    var scoresT = scores[b].T;  // (N, nc)
+                    var boxesT = boxes[b].T;
+                    var scoresT = scores[b].T;
 
                     var (maxScores, maxClasses) = scoresT.max(dim: -1);
                     var confMask = maxScores > conf;
@@ -284,7 +331,6 @@ public static class Program
 
                     var predBoxesXyxy = YOLOv8.Core.Utils.BboxUtils.Xywh2Xyxy(filteredBoxes);
 
-                    // Get GT
                     var gtMask = maskGT[b, .., 0].to(ScalarType.Bool);
                     var gtBoxesImg = gtBboxes[b][gtMask] * imgSize;
                     var gtClassesImg = gtLabels[b][gtMask][.., 0].to(ScalarType.Int64);
@@ -342,14 +388,15 @@ public static class Program
         Console.WriteLine();
 
         var (map50, map5095, perClassAP50) = metric.Compute();
+        double fitness = Trainer.ComputeFitness(map50, map5095);
 
         Console.WriteLine();
         Console.WriteLine("=== Validation Results ===");
         Console.WriteLine($"  mAP@0.5:      {map50:F4}");
         Console.WriteLine($"  mAP@0.5:0.95: {map5095:F4}");
+        Console.WriteLine($"  Fitness:       {fitness:F4}");
         Console.WriteLine();
 
-        // Per-class AP
         if (dataConfig.Names.Count > 0)
         {
             Console.WriteLine("  Per-class AP@0.5:");
@@ -394,20 +441,16 @@ public static class Program
     {
         modelName = modelName.ToLowerInvariant().Trim();
 
-        // Direct variant letter
         if (modelName.Length == 1 && "nsmlx".Contains(modelName))
             return modelName;
 
-        // yolov8n, yolov8s, etc.
         if (modelName.StartsWith("yolov8") && modelName.Length > 6)
         {
             string suffix = modelName[6..];
-            // Could be "n", "s", "m", "l", "x" or with "-cls", "-seg" etc.
             if (suffix.Length >= 1 && "nsmlx".Contains(suffix[0]))
                 return suffix[0].ToString();
         }
 
-        // Default to n
         Console.WriteLine($"Warning: Could not parse model variant from '{modelName}', defaulting to 'n'");
         return "n";
     }
@@ -420,24 +463,17 @@ public static class Program
         string deviceStr = options.GetValueOrDefault("device", "auto") ?? "auto";
 
         if (deviceStr == "auto")
-        {
             return torch.cuda.is_available() ? torch.CUDA : torch.CPU;
-        }
         else if (deviceStr == "cpu")
-        {
             return torch.CPU;
-        }
         else if (deviceStr.StartsWith("cuda") || int.TryParse(deviceStr, out _))
-        {
             return torch.CUDA;
-        }
 
         return torch.CPU;
     }
 
     /// <summary>
     /// Parse command-line options into a dictionary.
-    /// Supports --key value and --flag formats.
     /// </summary>
     private static Dictionary<string, string> ParseOptions(string[] args)
     {
@@ -451,7 +487,6 @@ public static class Program
             {
                 string key = arg[2..].Replace("-", "_");
 
-                // Check if next arg is a value or another flag
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                 {
                     options[key] = args[i + 1];
@@ -464,7 +499,6 @@ public static class Program
             }
             else if (arg.StartsWith("-") && arg.Length == 2)
             {
-                // Short flags
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
                 {
                     options[arg[1..]] = args[i + 1];
@@ -476,9 +510,6 @@ public static class Program
         return options;
     }
 
-    /// <summary>
-    /// Get a required option or throw with a helpful message.
-    /// </summary>
     private static string GetRequired(Dictionary<string, string> options, string key, string errorMessage)
     {
         if (options.TryGetValue(key, out var value) && !string.IsNullOrEmpty(value))
@@ -486,17 +517,15 @@ public static class Program
         throw new ArgumentException(errorMessage);
     }
 
-    /// <summary>
-    /// Print usage information.
-    /// </summary>
     private static int PrintUsage()
     {
         Console.WriteLine("Usage: dotnet run -- <command> [options]");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  train     Train a YOLOv8 model");
-        Console.WriteLine("  predict   Run inference on images");
-        Console.WriteLine("  val       Validate a model on a dataset");
+        Console.WriteLine("  train       Train a YOLOv8 model");
+        Console.WriteLine("  bench       Benchmark multiple model variants (n/s/m/l/x)");
+        Console.WriteLine("  predict     Run inference on images");
+        Console.WriteLine("  val         Validate a model on a dataset");
         Console.WriteLine();
         Console.WriteLine("Train options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
@@ -508,8 +537,19 @@ public static class Program
         Console.WriteLine("  --optimizer <name>   Optimizer: SGD/AdamW/auto (default: auto)");
         Console.WriteLine("  --lr0 <n>            Initial learning rate (default: 0.01)");
         Console.WriteLine("  --cos_lr             Use cosine LR schedule");
+        Console.WriteLine("  --seed <n>           Random seed for reproducibility (default: 0)");
         Console.WriteLine("  --device <dev>       Device: auto/cpu/cuda/0 (default: auto)");
         Console.WriteLine("  --project <dir>      Save results to project/name (default: runs/train)");
+        Console.WriteLine("  --name <name>        Experiment name (default: exp)");
+        Console.WriteLine();
+        Console.WriteLine("Benchmark options:");
+        Console.WriteLine("  --data <path>        Dataset YAML file (required)");
+        Console.WriteLine("  --models <list>      Comma-separated variants: n,s,m,l,x (default: n,s,m,l,x)");
+        Console.WriteLine("  --epochs <n>         Number of epochs (default: 100)");
+        Console.WriteLine("  --batch <n>          Batch size (default: 16)");
+        Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
+        Console.WriteLine("  --seed <n>           Random seed (default: 0)");
+        Console.WriteLine("  --project <dir>      Save results directory (default: runs/bench)");
         Console.WriteLine("  --name <name>        Experiment name (default: exp)");
         Console.WriteLine();
         Console.WriteLine("Predict options:");
@@ -520,7 +560,7 @@ public static class Program
         Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
         Console.WriteLine("  --nc <n>             Number of classes (default: 80)");
         Console.WriteLine("  --variant <v>        Model variant for architecture (default: n)");
-        Console.WriteLine("  --device <dev>       Device: auto/cpu/cuda/0 (default: auto)");
+        Console.WriteLine("  --device <dev>       Device (default: auto)");
         Console.WriteLine();
         Console.WriteLine("Val options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
@@ -530,10 +570,11 @@ public static class Program
         Console.WriteLine("  --conf <n>           Confidence threshold (default: 0.001)");
         Console.WriteLine("  --iou <n>            IoU threshold (default: 0.7)");
         Console.WriteLine("  --variant <v>        Model variant for architecture (default: n)");
-        Console.WriteLine("  --device <dev>       Device: auto/cpu/cuda/0 (default: auto)");
+        Console.WriteLine("  --device <dev>       Device (default: auto)");
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100");
+        Console.WriteLine("  dotnet run -- bench --data coco128.yaml --models n,s --epochs 50 --seed 42");
         Console.WriteLine("  dotnet run -- predict --model runs/train/exp/weights/best.pt --source image.jpg");
         Console.WriteLine("  dotnet run -- val --data coco128.yaml --model runs/train/exp/weights/best.pt");
 
