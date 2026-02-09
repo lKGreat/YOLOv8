@@ -101,7 +101,7 @@ public class TaskAlignedAssigner
         var targetScores = torch.zeros(batch, nAnchors, nc, dtype: dtype, device: device);
 
         // Normalize alignment metric: divide by max per GT
-        var alignMax = alignMetric.amax(-1, keepdim: true).clamp_min(1e-8); // (B, maxGT, 1)
+        var alignMax = alignMetric.amax(new long[] { -1 }, keepdim: true).clamp_min(1e-8); // (B, maxGT, 1)
         var normAlignMetric = (alignMetric / alignMax * maskPos).amax(1); // (B, N)
 
         // Scatter normalized metric to target class channels

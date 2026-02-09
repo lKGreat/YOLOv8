@@ -86,6 +86,6 @@ public class BboxLoss
         var lossR = functional.cross_entropy(predDist, tr.clamp_max(regMax - 1).view(-1), reduction: Reduction.None)
             .view(tr.shape) * wr;
 
-        return (lossL + lossR).mean(-1, keepdim: true);
+        return (lossL + lossR).mean(new long[] { -1 }, keepdim: true);
     }
 }
