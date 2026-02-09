@@ -94,8 +94,9 @@ public static class BboxUtils
     {
         // anchorPoints: (N, 2), bbox: (B, N, 4) as x1y1x2y2
         var anchor = anchorPoints.unsqueeze(0); // (1, N, 2)
-        var x1y1 = bbox[.., ..2]; // (B, N, 2)
-        var x2y2 = bbox[.., 2..]; // (B, N, 2)
+        var parts = bbox.chunk(2, dim: -1); // 2 x (B, N, 2)
+        var x1y1 = parts[0]; // (B, N, 2)
+        var x2y2 = parts[1]; // (B, N, 2)
 
         var lt = anchor - x1y1;
         var rb = x2y2 - anchor;

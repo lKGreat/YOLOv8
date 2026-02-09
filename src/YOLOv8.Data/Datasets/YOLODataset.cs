@@ -58,10 +58,17 @@ public class YOLODataset
     public void CacheLabels()
     {
         labelCache = new List<BboxInstance>[imagePaths.Length];
+        int totalLabels = 0;
+        int emptyFiles = 0;
         for (int i = 0; i < imagePaths.Length; i++)
         {
             labelCache[i] = LabelParser.ParseYOLOLabel(labelPaths[i]);
+            totalLabels += labelCache[i].Count;
+            if (labelCache[i].Count == 0) emptyFiles++;
         }
+        Console.WriteLine($"  Labels cached: {totalLabels} labels across {imagePaths.Length} images ({emptyFiles} empty)");
+        if (imagePaths.Length > 0)
+            Console.WriteLine($"  Sample label path: {labelPaths[0]}");
     }
 
     /// <summary>

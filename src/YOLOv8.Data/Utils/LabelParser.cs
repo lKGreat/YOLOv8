@@ -63,11 +63,12 @@ public static class LabelParser
     /// </summary>
     public static string ImageToLabelPath(string imagePath)
     {
-        var labelPath = imagePath
-            .Replace("\\images\\", "\\labels\\")
-            .Replace("/images/", "/labels/");
+        // Normalize path separators to handle mixed / and \ on Windows
+        var normalized = imagePath.Replace('/', Path.DirectorySeparatorChar)
+                                   .Replace('\\', Path.DirectorySeparatorChar);
+        var sep = Path.DirectorySeparatorChar;
+        var labelPath = normalized.Replace($"{sep}images{sep}", $"{sep}labels{sep}");
 
-        var ext = Path.GetExtension(labelPath);
         return Path.ChangeExtension(labelPath, ".txt");
     }
 }

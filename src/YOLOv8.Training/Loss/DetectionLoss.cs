@@ -28,6 +28,7 @@ public class DetectionLoss
     private readonly double boxGain;
     private readonly double clsGain;
     private readonly double dflGain;
+    private bool _diagPrinted = false;
 
     public DetectionLoss(int nc, int regMax = 16, long[]? strides = null,
         double boxGain = 7.5, double clsGain = 0.5, double dflGain = 1.5)
@@ -88,6 +89,20 @@ public class DetectionLoss
 
         // Predicted scores (sigmoid for assignment)
         var predScores = predClsLogits.detach().sigmoid();
+
+        // Debug: print diagnostic info for first call
+        if (!_diagPrinted)
+        {
+            _diagPrinted = true;
+            Console.WriteLine($"  [DIAG] rawBox: {rawBox.shape}, rawCls: {rawCls.shape}");
+            Console.WriteLine($"  [DIAG] anchorPoints: {anchorPoints.shape}, strideTensor: {strideTensor.shape}");
+            Console.WriteLine($"  [DIAG] predBboxesScaled range: [{predBboxesScaled.min().item<float>():F2}, {predBboxesScaled.max().item<float>():F2}]");
+            Console.WriteLine($"  [DIAG] gtBboxesScaled range: [{gtBboxesScaled.min().item<float>():F2}, {gtBboxesScaled.max().item<float>():F2}]");
+            Console.WriteLine($"  [DIAG] batchMaskGT sum: {batchMaskGT.sum().item<float>()}");
+            Console.WriteLine($"  [DIAG] predScores range: [{predScores.min().item<float>():F4}, {predScores.max().item<float>():F4}]");
+            var acPixel = anchorPoints * strideTensor;
+            Console.WriteLine($"  [DIAG] anchor centers pixel range: [{acPixel.min().item<float>():F1}, {acPixel.max().item<float>():F1}]");
+        }
 
         // Task-aligned assignment
         var (targetLabels, targetBboxes, targetScores, fgMask, targetGTIdx) =
