@@ -158,6 +158,14 @@ public class PickleReader
                     break;
                 }
 
+                case 0x58: // BINUNICODE8 (protocol 4+, 8-byte length)
+                {
+                    long len = r.ReadInt64();
+                    var bytes = r.ReadBytes((int)len);
+                    _stack.Push(Encoding.UTF8.GetString(bytes));
+                    break;
+                }
+
                 case 0x54: // BINSTRING (4-byte length, raw bytes)
                 {
                     int len = r.ReadInt32();

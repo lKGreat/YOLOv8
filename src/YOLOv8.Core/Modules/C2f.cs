@@ -18,7 +18,7 @@ public class C2f : Module<Tensor, Tensor>
 {
     private readonly ConvBlock cv1;
     private readonly ConvBlock cv2;
-    private readonly Bottleneck[] m;
+    private readonly ModuleList<Bottleneck> m;
     private readonly int c; // hidden channels
 
     /// <summary>
@@ -38,10 +38,10 @@ public class C2f : Module<Tensor, Tensor>
         cv1 = new ConvBlock($"{name}_cv1", c1, 2 * c, k: 1, s: 1);
         cv2 = new ConvBlock($"{name}_cv2", (2 + n) * c, c2, k: 1, s: 1);
 
-        m = new Bottleneck[n];
+        m = new ModuleList<Bottleneck>();
         for (int i = 0; i < n; i++)
         {
-            m[i] = new Bottleneck($"{name}_m{i}", c, c, shortcut, g, e: 1.0);
+            m.Add(new Bottleneck($"{name}_m{i}", c, c, shortcut, g, e: 1.0));
         }
 
         RegisterComponents();
@@ -57,9 +57,9 @@ public class C2f : Module<Tensor, Tensor>
         var branches = new List<Tensor> { chunks[0], chunks[1] };
 
         var current = chunks[1];
-        foreach (var bn in m)
+        for (int i = 0; i < m.Count; i++)
         {
-            current = bn.forward(current);
+            current = m[i].forward(current);
             branches.Add(current);
         }
 
