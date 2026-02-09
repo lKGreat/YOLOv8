@@ -6,6 +6,8 @@ using YOLO.Core.Utils;
 using YOLO.Data.Datasets;
 using YOLO.Inference;
 using YOLO.Inference.Metrics;
+using YOLO.Runtime;
+using YOLO.Runtime.Results;
 using YOLO.Training;
 using YOLO.Training.Config;
 using static TorchSharp.torch;
@@ -57,6 +59,7 @@ public static class Program
                 "val" or "validate" => RunValidate(options),
                 "export" => RunExport(options),
                 "generate-data" => RunGenerateData(options),
+                "runtime-infer" => RunRuntimeInfer(options),
                 "--help" or "-h" or "help" => PrintUsage(),
                 _ => PrintUnknownCommand(command)
             };
@@ -490,6 +493,143 @@ public static class Program
     }
 
     /// <summary>
+    /// Run inference using the YOLO.Runtime framework (supports .onnx and .pt).
+    /// Demonstrates the minimalist API of YoloInfer.
+    /// </summary>
+    private static int RunRuntimeInfer(Dictionary<string, string> options)
+    {
+        string modelPath = GetRequired(options, "model", "Model path is required (--model)");
+        string source = GetRequired(options, "source", "Source is required (--source)");
+
+        // Build options from CLI
+        var yoloOptions = new YoloOptions
+        {
+            Confidence = float.Parse(options.GetValueOrDefault("conf", "0.25")),
+            IoU = float.Parse(options.GetValueOrDefault("iou", "0.45")),
+            ImgSize = int.Parse(options.GetValueOrDefault("imgsz", "640")),
+            MaxDetections = int.Parse(options.GetValueOrDefault("max_det", "300")),
+            ModelVersion = options.TryGetValue("version", out var ver) ? ver : null,
+            ModelVariant = options.GetValueOrDefault("variant", "n"),
+            NumClasses = int.Parse(options.GetValueOrDefault("nc", "80")),
+        };
+
+        // Device
+        string deviceStr = options.GetValueOrDefault("device", "auto") ?? "auto";
+        yoloOptions.Device = deviceStr switch
+        {
+            "cpu" => YOLO.Runtime.DeviceType.Cpu,
+            "gpu" or "cuda" => YOLO.Runtime.DeviceType.Gpu,
+            _ => YOLO.Runtime.DeviceType.Auto
+        };
+
+        bool draw = options.ContainsKey("draw");
+        string? saveDir = options.TryGetValue("save_dir", out var sd) ? sd : null;
+
+        Console.WriteLine($"[YOLO.Runtime] Loading model: {modelPath}");
+        Console.WriteLine($"  Backend: {(Path.GetExtension(modelPath).ToLower() == ".onnx" ? "ONNX Runtime" : "TorchSharp")}");
+        Console.WriteLine($"  Device: {yoloOptions.Device}");
+        Console.WriteLine($"  Image size: {yoloOptions.ImgSize}");
+        Console.WriteLine($"  Confidence: {yoloOptions.Confidence}");
+        Console.WriteLine($"  IoU: {yoloOptions.IoU}");
+        Console.WriteLine();
+
+        using var yolo = new YoloInfer(modelPath, yoloOptions);
+
+        // Check if source is a PDF
+        if (source.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine($"[PDF Mode] Processing: {source}");
+            var pages = yolo.DetectPdf(source);
+
+            foreach (var page in pages)
+            {
+                Console.WriteLine($"  Page {page.PageIndex}: {page.Detections.Length} detections");
+                foreach (var det in page.Detections)
+                {
+                    Console.WriteLine($"    {det}");
+                }
+            }
+            Console.WriteLine($"Total: {pages.Length} pages, {pages.Sum(p => p.Detections.Length)} detections");
+            return 0;
+        }
+
+        // Collect image files
+        var imageFiles = new List<string>();
+        if (File.Exists(source))
+        {
+            imageFiles.Add(source);
+        }
+        else if (Directory.Exists(source))
+        {
+            var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp" };
+            imageFiles.AddRange(
+                Directory.GetFiles(source, "*.*", SearchOption.AllDirectories)
+                    .Where(f => extensions.Contains(Path.GetExtension(f)))
+                    .OrderBy(f => f));
+        }
+        else
+        {
+            Console.Error.WriteLine($"Source not found: {source}");
+            return 1;
+        }
+
+        Console.WriteLine($"Processing {imageFiles.Count} image(s)...");
+        Console.WriteLine();
+
+        if (imageFiles.Count > 1)
+        {
+            // Batch mode
+            var batchResults = yolo.DetectBatch(imageFiles.ToArray());
+            for (int i = 0; i < imageFiles.Count; i++)
+            {
+                Console.WriteLine($"Image: {Path.GetFileName(imageFiles[i])} -> {batchResults[i].Length} detections");
+                foreach (var det in batchResults[i])
+                {
+                    Console.WriteLine($"  {det}");
+                }
+            }
+        }
+        else
+        {
+            // Single image
+            var imagePath = imageFiles[0];
+
+            if (draw)
+            {
+                var (detections, annotated) = yolo.DetectAndDrawDetailed(imagePath);
+                Console.WriteLine($"Image: {Path.GetFileName(imagePath)} -> {detections.Length} detections");
+                foreach (var det in detections)
+                {
+                    Console.WriteLine($"  {det}");
+                }
+
+                // Save annotated image
+                var outPath = saveDir is not null
+                    ? Path.Combine(saveDir, "annotated_" + Path.GetFileName(imagePath))
+                    : "annotated_" + Path.GetFileNameWithoutExtension(imagePath) + ".png";
+
+                if (saveDir is not null)
+                    Directory.CreateDirectory(saveDir);
+
+                File.WriteAllBytes(outPath, annotated);
+                Console.WriteLine($"Annotated image saved: {outPath}");
+            }
+            else
+            {
+                var detections = yolo.Detect(imagePath);
+                Console.WriteLine($"Image: {Path.GetFileName(imagePath)} -> {detections.Length} detections");
+                foreach (var det in detections)
+                {
+                    Console.WriteLine($"  {det}");
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Parse a model name into (version, variant).
     /// Supports: "yolov8n", "yolov9s", "yolov10m", "v8n", "n" (defaults to v8).
     /// </summary>
@@ -620,11 +760,12 @@ public static class Program
         Console.WriteLine("Usage: dotnet run -- <command> [options]");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  train       Train a YOLO model");
-        Console.WriteLine("  bench       Benchmark multiple model variants (n/s/m/l/x)");
-        Console.WriteLine("  predict     Run inference on images");
-        Console.WriteLine("  val         Validate a model on a dataset");
-        Console.WriteLine("  export      Export model to ONNX/TorchScript");
+        Console.WriteLine("  train          Train a YOLO model");
+        Console.WriteLine("  bench          Benchmark multiple model variants (n/s/m/l/x)");
+        Console.WriteLine("  predict        Run inference on images (TorchSharp)");
+        Console.WriteLine("  runtime-infer  Run inference via YOLO.Runtime (.onnx/.pt, PDF, batch, draw)");
+        Console.WriteLine("  val            Validate a model on a dataset");
+        Console.WriteLine("  export         Export model to ONNX/TorchScript");
         Console.WriteLine();
         Console.WriteLine("Train options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
@@ -681,6 +822,19 @@ public static class Program
         Console.WriteLine("  --iou <n>            IoU threshold (default: 0.7)");
         Console.WriteLine("  --device <dev>       Device (default: auto)");
         Console.WriteLine();
+        Console.WriteLine("Runtime-infer options (YOLO.Runtime framework):");
+        Console.WriteLine("  --model <path>       .onnx or .pt model file (required)");
+        Console.WriteLine("  --source <path>      Image file, directory, or PDF file (required)");
+        Console.WriteLine("  --version <v>        Model version: v8/v9/v10 (default: auto-detect)");
+        Console.WriteLine("  --variant <v>        Model variant for .pt: n/s/m/l/x (default: n)");
+        Console.WriteLine("  --conf <n>           Confidence threshold (default: 0.25)");
+        Console.WriteLine("  --iou <n>            IoU threshold (default: 0.45)");
+        Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
+        Console.WriteLine("  --nc <n>             Number of classes for .pt (default: 80)");
+        Console.WriteLine("  --device <dev>       cpu/gpu/auto (default: auto)");
+        Console.WriteLine("  --draw               Draw detection boxes on image");
+        Console.WriteLine("  --save_dir <dir>     Save annotated images to directory");
+        Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov9s --epochs 100");
@@ -688,6 +842,12 @@ public static class Program
         Console.WriteLine("  dotnet run -- bench --data coco128.yaml --models n,s --version v8 --epochs 50 --seed 42");
         Console.WriteLine("  dotnet run -- predict --model runs/train/exp/weights/best.pt --source image.jpg --version v8");
         Console.WriteLine("  dotnet run -- val --data coco128.yaml --model runs/train/exp/weights/best.pt --version v8");
+        Console.WriteLine();
+        Console.WriteLine("  # YOLO.Runtime examples:");
+        Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source image.jpg");
+        Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source ./images/ --device gpu");
+        Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source image.jpg --draw --save_dir results/");
+        Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source document.pdf");
 
         return 0;
     }

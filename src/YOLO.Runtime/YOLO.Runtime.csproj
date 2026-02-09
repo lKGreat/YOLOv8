@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>YOLO.Runtime</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="nlog.config" Pack="true" PackagePath="content" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ONNX Runtime with GPU support (includes CPU fallback) -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="*" />
+    <!-- Image loading, resizing, pixel manipulation -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.*" />
+    <!-- Drawing boxes, text, labels on images -->
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.*" />
+    <!-- PDF page rendering -->
+    <PackageReference Include="PDFtoImage" Version="4.*" />
+    <!-- Structured logging with timing -->
+    <PackageReference Include="NLog" Version="5.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- For .pt model support via TorchSharp (reuses existing model definitions) -->
+    <ProjectReference Include="..\YOLO.Core\YOLO.Core.csproj" />
+  </ItemGroup>
+
+</Project>
