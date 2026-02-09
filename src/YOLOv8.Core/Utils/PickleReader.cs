@@ -150,7 +150,7 @@ public class PickleReader
                     break;
                 }
 
-                case 0x8D: // BINUNICODE (4-byte length)
+                case 0x58: // BINUNICODE (4-byte length)
                 {
                     int len = r.ReadInt32();
                     var bytes = r.ReadBytes(len);
@@ -158,7 +158,7 @@ public class PickleReader
                     break;
                 }
 
-                case 0x58: // BINUNICODE8 (protocol 4+, 8-byte length)
+                case 0x8D: // BINUNICODE8 (protocol 4+, 8-byte length)
                 {
                     long len = r.ReadInt64();
                     var bytes = r.ReadBytes((int)len);
