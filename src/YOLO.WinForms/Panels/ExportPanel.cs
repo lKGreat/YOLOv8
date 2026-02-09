@@ -139,7 +139,11 @@ public partial class ExportPanel : UserControl
             Invoke(() => AppendLog(message));
             return;
         }
+        txtLog.SuspendLayout();
         txtLog.AppendText(message + Environment.NewLine);
+        txtLog.SelectionStart = txtLog.TextLength;
+        txtLog.SelectionLength = 0;
         txtLog.ScrollToCaret();
+        txtLog.ResumeLayout();
     }
 }

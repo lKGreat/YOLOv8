@@ -63,6 +63,24 @@ public record TrainConfig
 }
 
 /// <summary>
+/// Per-epoch metrics reported via callback during training.
+/// </summary>
+public record EpochMetrics
+{
+    public int Epoch { get; init; }
+    public int TotalEpochs { get; init; }
+    public double BoxLoss { get; init; }
+    public double ClsLoss { get; init; }
+    public double DflLoss { get; init; }
+    public double DistillLoss { get; init; }
+    public double Map50 { get; init; }
+    public double Map5095 { get; init; }
+    public double Fitness { get; init; }
+    public double LearningRate { get; init; }
+    public bool IsBest { get; init; }
+}
+
+/// <summary>
 /// Training result containing best metrics and timing.
 /// </summary>
 public record TrainResult
@@ -136,8 +154,10 @@ public class Trainer
     /// <param name="trainDataDir">Training images directory</param>
     /// <param name="valDataDir">Validation images directory (optional)</param>
     /// <param name="classNames">Optional class names for per-class AP display</param>
+    /// <param name="onEpochCompleted">Optional callback invoked after each epoch with live metrics</param>
     /// <returns>TrainResult with best metrics</returns>
-    public TrainResult Train(string trainDataDir, string? valDataDir = null, string[]? classNames = null)
+    public TrainResult Train(string trainDataDir, string? valDataDir = null,
+        string[]? classNames = null, Action<EpochMetrics>? onEpochCompleted = null)
     {
         var sw = Stopwatch.StartNew();
 
@@ -486,6 +506,22 @@ public class Trainer
             }
 
             Console.WriteLine();
+
+            // Invoke per-epoch callback for real-time UI updates
+            onEpochCompleted?.Invoke(new EpochMetrics
+            {
+                Epoch = epoch + 1,
+                TotalEpochs = config.Epochs,
+                BoxLoss = avgBox,
+                ClsLoss = avgCls,
+                DflLoss = avgDfl,
+                DistillLoss = avgDistill,
+                Map50 = currentMap50,
+                Map5095 = currentMap5095,
+                Fitness = fitness,
+                LearningRate = currentLr,
+                IsBest = isBest
+            });
 
             if (patienceCounter >= config.Patience)
             {

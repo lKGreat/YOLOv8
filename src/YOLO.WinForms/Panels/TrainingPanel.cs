@@ -68,6 +68,26 @@ public partial class TrainingPanel : UserControl
         btnStop.Click += BtnStop_Click;
 
         trainingService.LogMessage += (s, msg) => AppendLog(msg);
+
+        // Real-time chart update: feed per-epoch metrics into MetricsChart
+        trainingService.EpochCompleted += (s, m) =>
+        {
+            metricsChart?.AddEpoch(
+                m.Epoch, m.BoxLoss, m.ClsLoss, m.DflLoss,
+                m.Map50, m.Map5095, m.LearningRate);
+
+            var bestMark = m.IsBest ? " *" : "";
+            AppendLog($"Epoch {m.Epoch}/{m.TotalEpochs}  " +
+                $"box={m.BoxLoss:F4}  cls={m.ClsLoss:F4}  dfl={m.DflLoss:F4}  " +
+                $"mAP50={m.Map50:F4}  mAP50-95={m.Map5095:F4}  " +
+                $"fitness={m.Fitness:F4}  lr={m.LearningRate:E2}{bestMark}");
+
+            StatusChanged?.Invoke(this,
+                $"Epoch {m.Epoch}/{m.TotalEpochs} | " +
+                $"loss={m.BoxLoss + m.ClsLoss + m.DflLoss:F4} | " +
+                $"mAP50={m.Map50:F4} | fitness={m.Fitness:F4}");
+        };
+
         trainingService.TrainingCompleted += (s, result) =>
         {
             AppendLog($"\nTraining completed! Best fitness: {result.BestFitness:F4}");
@@ -191,8 +211,13 @@ public partial class TrainingPanel : UserControl
             return;
         }
 
+        txtLog.SuspendLayout();
         txtLog.AppendText(message + Environment.NewLine);
+        // Force scroll to bottom: move caret to end, then scroll
+        txtLog.SelectionStart = txtLog.TextLength;
+        txtLog.SelectionLength = 0;
         txtLog.ScrollToCaret();
+        txtLog.ResumeLayout();
     }
 
     /// <summary>
@@ -234,8 +259,12 @@ public partial class TrainingPanel : UserControl
                 return;
             }
 
+            textBox.SuspendLayout();
             textBox.AppendText(text);
+            textBox.SelectionStart = textBox.TextLength;
+            textBox.SelectionLength = 0;
             textBox.ScrollToCaret();
+            textBox.ResumeLayout();
         }
     }
 }

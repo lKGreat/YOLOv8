@@ -3,22 +3,6 @@ using YOLO.Training;
 namespace YOLO.WinForms.Services;
 
 /// <summary>
-/// Event args for epoch completion with metrics.
-/// </summary>
-public class EpochCompletedEventArgs : EventArgs
-{
-    public int Epoch { get; init; }
-    public int TotalEpochs { get; init; }
-    public double BoxLoss { get; init; }
-    public double ClsLoss { get; init; }
-    public double DflLoss { get; init; }
-    public double Map50 { get; init; }
-    public double Map5095 { get; init; }
-    public double Fitness { get; init; }
-    public double LearningRate { get; init; }
-}
-
-/// <summary>
 /// Progress info for training.
 /// </summary>
 public record TrainingProgress(
@@ -29,20 +13,30 @@ public record TrainingProgress(
 
 /// <summary>
 /// Service that wraps the Trainer for background execution in WinForms.
-/// Provides async execution with cancellation and progress reporting.
+/// Provides async execution with cancellation, progress reporting,
+/// and real-time per-epoch metrics via the EpochCompleted event.
 /// </summary>
 public class TrainingService
 {
     private CancellationTokenSource? _cts;
 
+    /// <summary>Fired after each epoch with live metrics (box/cls/dfl loss, mAP, LR, etc.).</summary>
+    public event EventHandler<EpochMetrics>? EpochCompleted;
+
+    /// <summary>Fired when the entire training run finishes successfully.</summary>
     public event EventHandler<TrainResult>? TrainingCompleted;
+
+    /// <summary>Fired when training fails with an exception.</summary>
     public event EventHandler<string>? TrainingFailed;
+
+    /// <summary>General log messages.</summary>
     public event EventHandler<string>? LogMessage;
 
     public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
 
     /// <summary>
     /// Start training asynchronously in a background thread.
+    /// Per-epoch metrics are reported via the <see cref="EpochCompleted"/> event.
     /// </summary>
     public Task<TrainResult?> TrainAsync(
         TrainConfig config,
@@ -63,7 +57,22 @@ public class TrainingService
                 LogMessage?.Invoke(this, $"Epochs: {config.Epochs}, Batch: {config.BatchSize}, ImgSize: {config.ImgSize}");
 
                 var trainer = new Trainer(config);
-                var result = trainer.Train(trainDataDir, valDataDir, classNames);
+
+                // Pass per-epoch callback so UI can update charts in real-time
+                var result = trainer.Train(trainDataDir, valDataDir, classNames,
+                    onEpochCompleted: metrics =>
+                    {
+                        // Forward to event subscribers (TrainingPanel updates MetricsChart here)
+                        EpochCompleted?.Invoke(this, metrics);
+
+                        // Also report progress percentage
+                        int pct = (int)(100.0 * metrics.Epoch / metrics.TotalEpochs);
+                        progress?.Report(new TrainingProgress("Training",
+                            pct, $"Epoch {metrics.Epoch}/{metrics.TotalEpochs}"));
+
+                        // Check cancellation between epochs
+                        ct.ThrowIfCancellationRequested();
+                    });
 
                 progress?.Report(new TrainingProgress("Complete", 100, "Training finished."));
                 TrainingCompleted?.Invoke(this, result);
