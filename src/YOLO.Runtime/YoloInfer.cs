@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using PdfSharpCore.Drawing;
+using PdfSharpCore.Pdf;
+using PdfSharpCore.Pdf.IO;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
@@ -217,6 +220,23 @@ public sealed class YoloInfer : IDisposable
     }
 
     /// <summary>
+    /// Run detection on all pages of a PDF file and save annotated PDF.
+    /// The original PDF content is preserved — only detection boxes are overlaid.
+    /// </summary>
+    /// <param name="pdfPath">Path to the input PDF file.</param>
+    /// <param name="outputPath">Path to save the annotated PDF file.</param>
+    /// <returns>Array of results, one per page.</returns>
+    public PageResult[] DetectPdfAndSave(string pdfPath, string outputPath)
+    {
+        var results = DetectPdfAsync(pdfPath).GetAwaiter().GetResult();
+
+        // Open the original PDF and draw detection boxes on it
+        PdfHelper.OverlayDetectionsOnPdf(pdfPath, outputPath, results, _options);
+
+        return results;
+    }
+
+    /// <summary>
     /// Run detection on all pages of a PDF file asynchronously.
     /// </summary>
     public async Task<PageResult[]> DetectPdfAsync(string pdfPath, CancellationToken ct = default)
@@ -308,28 +328,46 @@ public sealed class YoloInfer : IDisposable
 }
 
 /// <summary>
-/// Internal helper for PDF page rendering using PDFtoImage + SkiaSharp.
+/// Internal helper for PDF page rendering and annotation.
 /// </summary>
 #pragma warning disable CA1416 // Platform compatibility (PDFium is Windows/Linux/macOS)
 internal static class PdfHelper
 {
+    // YOLO-style color palette (matches ImageDrawer)
+    private static readonly XColor[] Palette =
+    [
+        XColor.FromArgb(0xFF, 0x38, 0x38), XColor.FromArgb(0xFF, 0x9D, 0x97),
+        XColor.FromArgb(0xFF, 0x70, 0x1F), XColor.FromArgb(0xFF, 0xB2, 0x1D),
+        XColor.FromArgb(0xCF, 0xD2, 0x31), XColor.FromArgb(0x48, 0xF9, 0x0A),
+        XColor.FromArgb(0x92, 0xCC, 0x17), XColor.FromArgb(0x3D, 0xDB, 0x86),
+        XColor.FromArgb(0x1A, 0x93, 0x34), XColor.FromArgb(0x00, 0xD4, 0xBB),
+        XColor.FromArgb(0x2C, 0x99, 0xA8), XColor.FromArgb(0x00, 0xC2, 0xFF),
+        XColor.FromArgb(0x34, 0x45, 0x93), XColor.FromArgb(0x64, 0x73, 0xFF),
+        XColor.FromArgb(0x00, 0x18, 0xEC), XColor.FromArgb(0x84, 0x38, 0xFF),
+        XColor.FromArgb(0x52, 0x00, 0x85), XColor.FromArgb(0xCB, 0x38, 0xFF),
+        XColor.FromArgb(0xFF, 0x95, 0xC8), XColor.FromArgb(0xFF, 0x37, 0xC7)
+    ];
+
+    /// <summary>
+    /// Render PDF pages to images for detection.
+    /// </summary>
     public static List<Image<Rgb24>> RenderPages(string pdfPath, int dpi = 200)
     {
         var pages = new List<Image<Rgb24>>();
 
-        using var pdfStream = File.OpenRead(pdfPath);
-        int pageCount = PDFtoImage.Conversion.GetPageCount(pdfStream);
+        int pageCount;
+        using (var pdfStream = File.OpenRead(pdfPath))
+        {
+            pageCount = PDFtoImage.Conversion.GetPageCount(pdfStream);
+        }
 
         var renderOptions = new PDFtoImage.RenderOptions { Dpi = dpi };
 
         for (int i = 0; i < pageCount; i++)
         {
-            pdfStream.Position = 0;
-
-            // Render page to SkiaSharp bitmap
+            using var pdfStream = File.OpenRead(pdfPath);
             using var bitmap = PDFtoImage.Conversion.ToImage(pdfStream, page: new Index(i), options: renderOptions);
 
-            // Convert SKBitmap -> PNG bytes -> ImageSharp Image<Rgb24>
             using var skImage = SkiaSharp.SKImage.FromBitmap(bitmap);
             using var encoded = skImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
             using var ms = new MemoryStream(encoded.ToArray());
@@ -338,5 +376,89 @@ internal static class PdfHelper
         }
 
         return pages;
+    }
+
+    /// <summary>
+    /// Open the original PDF, draw detection boxes directly on each page, save as a new file.
+    /// The original PDF content (text, vector graphics, images) is fully preserved.
+    /// Only bounding boxes + labels are overlaid.
+    /// </summary>
+    public static void OverlayDetectionsOnPdf(
+        string sourcePdfPath,
+        string outputPath,
+        PageResult[] results,
+        YoloOptions options)
+    {
+        int dpi = options.PdfDpi;
+        string[]? classNames = options.ClassNames;
+
+        // Open original PDF
+        using var document = PdfReader.Open(sourcePdfPath, PdfDocumentOpenMode.Modify);
+
+        foreach (var result in results)
+        {
+            if (result.Detections.Length == 0)
+                continue;
+
+            if (result.PageIndex < 0 || result.PageIndex >= document.PageCount)
+                continue;
+
+            var page = document.Pages[result.PageIndex];
+
+            // PDF page size in points (1 point = 1/72 inch)
+            double pageWidthPt = page.Width.Point;
+            double pageHeightPt = page.Height.Point;
+
+            // Rendered image size in pixels = page_points * dpi / 72
+            // So to convert detection pixel coords → PDF points: pixel * 72 / dpi
+            double scale = 72.0 / dpi;
+
+            // Draw on top of existing content
+            using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
+
+            double lineWidth = Math.Max(1.0, Math.Min(pageWidthPt, pageHeightPt) / 300.0);
+            double fontSize = Math.Max(7.0, Math.Min(pageWidthPt, pageHeightPt) / 60.0);
+            var font = new XFont("Arial", fontSize, XFontStyle.Bold);
+
+            foreach (var det in result.Detections)
+            {
+                var color = Palette[det.ClassId % Palette.Length];
+
+                // Convert pixel coordinates to PDF points
+                double x1 = det.X1 * scale;
+                double y1 = det.Y1 * scale;
+                double x2 = det.X2 * scale;
+                double y2 = det.Y2 * scale;
+                double w = x2 - x1;
+                double h = y2 - y1;
+
+                // Draw bounding box — stroke only, 3px border, no fill
+                double borderPt = 3.0 * scale; // 3 pixels converted to points
+                var pen = new XPen(color, borderPt);
+                gfx.DrawRectangle(pen, x1, y1, w, h);
+
+                // Build label
+                string label;
+                if (det.ClassName is not null)
+                    label = $"{det.ClassName} {det.Confidence:P0}";
+                else if (classNames is not null && det.ClassId < classNames.Length)
+                    label = $"{classNames[det.ClassId]} {det.Confidence:P0}";
+                else
+                    label = $"#{det.ClassId} {det.Confidence:P0}";
+
+                // Label background (small solid tag above the box)
+                var textSize = gfx.MeasureString(label, font);
+                double labelY = Math.Max(y1 - textSize.Height - 2, 0);
+                var bgRect = new XRect(x1, labelY, textSize.Width + 6, textSize.Height + 3);
+                gfx.DrawRectangle(new XSolidBrush(color), bgRect);
+
+                // Label text
+                gfx.DrawString(label, font, XBrushes.White,
+                    new XPoint(x1 + 3, labelY + textSize.Height - 1));
+            }
+        }
+
+        // Save modified PDF to output path
+        document.Save(outputPath);
     }
 }

@@ -539,7 +539,21 @@ public static class Program
         if (source.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
         {
             Console.WriteLine($"[PDF Mode] Processing: {source}");
-            var pages = yolo.DetectPdf(source);
+            
+            string? savePdfPath = options.TryGetValue("save_pdf", out var sp) ? sp : null;
+            
+            PageResult[] pages;
+            if (savePdfPath != null)
+            {
+                // Detect and save annotated PDF
+                pages = yolo.DetectPdfAndSave(source, savePdfPath);
+                Console.WriteLine($"Annotated PDF saved to: {savePdfPath}");
+            }
+            else
+            {
+                // Just detect without saving
+                pages = yolo.DetectPdf(source);
+            }
 
             foreach (var page in pages)
             {
@@ -834,6 +848,7 @@ public static class Program
         Console.WriteLine("  --device <dev>       cpu/gpu/auto (default: auto)");
         Console.WriteLine("  --draw               Draw detection boxes on image");
         Console.WriteLine("  --save_dir <dir>     Save annotated images to directory");
+        Console.WriteLine("  --save_pdf <path>    Save annotated PDF to file (for PDF source)");
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100");
@@ -848,6 +863,7 @@ public static class Program
         Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source ./images/ --device gpu");
         Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source image.jpg --draw --save_dir results/");
         Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source document.pdf");
+        Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source document.pdf --save_pdf annotated.pdf");
 
         return 0;
     }
