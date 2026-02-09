@@ -14,6 +14,7 @@ internal sealed class TorchSharpBackend : IInferenceBackend
 {
     private readonly YOLOModel _model;
     private readonly Device _device;
+    private readonly SemaphoreSlim _inferLock = new(1, 1);
     private bool _disposed;
 
     public string ModelPath { get; }
@@ -57,6 +58,33 @@ internal sealed class TorchSharpBackend : IInferenceBackend
 
     public (BufferHandle data, int[] shape) Run(ReadOnlySpan<float> input, int[] inputShape)
     {
+        // TorchSharp models are NOT thread-safe — serialize all forward passes
+        _inferLock.Wait();
+        try
+        {
+            return RunCore(input, inputShape);
+        }
+        finally
+        {
+            _inferLock.Release();
+        }
+    }
+
+    public async Task<(BufferHandle data, int[] shape)> RunAsync(float[] input, int[] inputShape, CancellationToken ct = default)
+    {
+        await _inferLock.WaitAsync(ct);
+        try
+        {
+            return await Task.Run(() => RunCore(input.AsSpan(), inputShape), ct);
+        }
+        finally
+        {
+            _inferLock.Release();
+        }
+    }
+
+    private (BufferHandle data, int[] shape) RunCore(ReadOnlySpan<float> input, int[] inputShape)
+    {
         using var scope = torch.NewDisposeScope();
         using var noGrad = torch.no_grad();
 
@@ -86,15 +114,11 @@ internal sealed class TorchSharpBackend : IInferenceBackend
         return (outputHandle, outputShape);
     }
 
-    public Task<(BufferHandle data, int[] shape)> RunAsync(float[] input, int[] inputShape, CancellationToken ct = default)
-    {
-        return Task.Run(() => Run(input.AsSpan(), inputShape), ct);
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        _inferLock.Dispose();
         _model.Dispose();
     }
 }
