@@ -16,7 +16,6 @@ public class TaskAlignedAssigner
     private readonly int topK;
     private readonly double alpha;
     private readonly double beta;
-    private bool _diagPrinted = false;
 
     public TaskAlignedAssigner(int topK = 10, double alpha = 0.5, double beta = 6.0)
     {
@@ -84,19 +83,6 @@ public class TaskAlignedAssigner
 
         // Final positive mask
         var maskPos = maskTopK * maskInGTs * maskGT; // (B, maxGT, N)
-
-        // Debug diagnostics
-        if (!_diagPrinted)
-        {
-            _diagPrinted = true;
-            Console.WriteLine($"  [ASSIGN DIAG] maskInGTs sum: {maskInGTs.sum().item<float>()}");
-            Console.WriteLine($"  [ASSIGN DIAG] maskTopK sum: {maskTopK.sum().item<float>()}");
-            Console.WriteLine($"  [ASSIGN DIAG] maskGT sum: {maskGT.sum().item<float>()}");
-            Console.WriteLine($"  [ASSIGN DIAG] maskPos sum: {maskPos.sum().item<float>()}");
-            Console.WriteLine($"  [ASSIGN DIAG] alignMetric max: {alignMetric.max().item<float>():E6}");
-            Console.WriteLine($"  [ASSIGN DIAG] overlaps max: {overlaps.max().item<float>():F6}");
-            Console.WriteLine($"  [ASSIGN DIAG] bboxScores max: {bboxScores.max().item<float>():F6}");
-        }
 
         // Step 4: Resolve conflicts - if one anchor assigned to multiple GTs, pick highest IoU
         var fgMask = maskPos.sum(1).to(ScalarType.Bool); // (B, N)
