@@ -86,7 +86,8 @@ public class TrainingMetricsLogger : IDisposable
 
         Console.WriteLine();
         Console.WriteLine("=== Training History ===");
-        Console.WriteLine($"{"Epoch",6} {"box",>10} {"cls",>10} {"dfl",>10} {"mAP50",>10} {"mAP50-95",>10} {"fitness",>10}");
+        Console.WriteLine(string.Format("{0,6} {1,10} {2,10} {3,10} {4,10} {5,10} {6,10}",
+            "Epoch", "box", "cls", "dfl", "mAP50", "mAP50-95", "fitness"));
         Console.WriteLine(new string('-', 72));
 
         // Show first 5, last 5, and best epoch

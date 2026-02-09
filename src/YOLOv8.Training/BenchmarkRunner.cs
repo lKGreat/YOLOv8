@@ -80,8 +80,8 @@ public class BenchmarkRunner
         Console.WriteLine(new string('=', 90));
         Console.WriteLine();
 
-        Console.WriteLine($"{"Variant",-10} {"Params",>12} {"mAP@0.5",>10} {"mAP50-95",>10} " +
-            $"{"Fitness",>10} {"Best Ep",>8} {"Time",>12}");
+        Console.WriteLine(string.Format("{0,-10} {1,12} {2,10} {3,10} {4,10} {5,8} {6,12}",
+            "Variant", "Params", "mAP@0.5", "mAP50-95", "Fitness", "Best Ep", "Time"));
         Console.WriteLine(new string('-', 76));
 
         TrainResult? bestResult = null;
@@ -90,7 +90,6 @@ public class BenchmarkRunner
         foreach (var r in results)
         {
             string time = FormatDuration(r.TrainingTime);
-            string marker = "";
 
             if (r.BestFitness > bestFitness)
             {

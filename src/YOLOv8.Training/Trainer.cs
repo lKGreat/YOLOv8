@@ -196,8 +196,8 @@ public class Trainer
 
         // Print header
         Console.WriteLine();
-        Console.WriteLine($"{"Epoch",>8} {"box",>10} {"cls",>10} {"dfl",>10} " +
-            $"{"mAP50",>10} {"mAP50-95",>10} {"fitness",>10}");
+        Console.WriteLine(string.Format("{0,8} {1,10} {2,10} {3,10} {4,10} {5,10} {6,10}",
+            "Epoch", "box", "cls", "dfl", "mAP50", "mAP50-95", "fitness"));
         Console.WriteLine(new string('-', 72));
 
         for (int epoch = 0; epoch < config.Epochs; epoch++)
@@ -254,7 +254,7 @@ public class Trainer
 
                 if (batchCount % 10 == 0 || batchCount == batchesPerEpoch)
                 {
-                    Console.Write($"\r{epoch + 1,>5}/{config.Epochs,-3} " +
+                    Console.Write($"\r{epoch + 1,5}/{config.Epochs,-3} " +
                         $"{epochBoxLoss / batchCount,10:F4} " +
                         $"{epochClsLoss / batchCount,10:F4} " +
                         $"{epochDflLoss / batchCount,10:F4} " +
@@ -286,7 +286,7 @@ public class Trainer
                 currentMap50, currentMap5095, fitness, currentLr);
 
             // Print epoch line
-            Console.Write($"\r{epoch + 1,>5}/{config.Epochs,-3} " +
+            Console.Write($"\r{epoch + 1,5}/{config.Epochs,-3} " +
                 $"{avgBox,10:F4} {avgCls,10:F4} {avgDfl,10:F4} " +
                 $"{currentMap50,10:F4} {currentMap5095,10:F4} {fitness,10:F4}");
 
