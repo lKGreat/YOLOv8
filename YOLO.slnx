@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/YOLO.Core/YOLO.Core.csproj" />
+    <Project Path="src/YOLO.Data/YOLO.Data.csproj" />
+    <Project Path="src/YOLO.Inference/YOLO.Inference.csproj" />
+    <Project Path="src/YOLO.Training/YOLO.Training.csproj" />
+    <Project Path="src/YOLO.App/YOLO.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/YOLO.Tests/YOLO.Tests.csproj" />
+  </Folder>
+</Solution>
