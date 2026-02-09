@@ -19,6 +19,10 @@ public partial class AnnotationPanel : UserControl
     private int _currentImageIndex = -1;
     private Image? _currentImage;
 
+    // Reentrancy guards to prevent infinite event loops
+    private bool _updatingSelection;
+    private bool _navigating;
+
     /// <summary>Fired when status text should be updated in the main form.</summary>
     public event EventHandler<string>? StatusChanged;
 
@@ -354,6 +358,7 @@ public partial class AnnotationPanel : UserControl
 
     private void LstImages_SelectedIndexChanged(object? sender, EventArgs e)
     {
+        if (_navigating) return;
         if (lstImages.SelectedItems.Count == 0) return;
         var item = lstImages.SelectedItems[0];
         if (item.Tag is int idx)
@@ -373,40 +378,49 @@ public partial class AnnotationPanel : UserControl
 
     private void NavigateToImage(int index)
     {
+        if (_navigating) return;
         if (_project == null || index < 0 || index >= _project.Images.Count) return;
 
-        // Save current state
-        _currentImageIndex = index;
-        _project.LastOpenedImageIndex = index;
-        _cmdManager.Clear();
-
-        // Load image
-        _currentImage?.Dispose();
-        _currentImage = null;
-
-        var imgInfo = _project.Images[index];
-        var imgPath = _project.GetImageAbsolutePath(imgInfo);
-
-        if (File.Exists(imgPath))
+        _navigating = true;
+        try
         {
-            try
+            // Save current state
+            _currentImageIndex = index;
+            _project.LastOpenedImageIndex = index;
+            _cmdManager.Clear();
+
+            // Load image
+            _currentImage?.Dispose();
+            _currentImage = null;
+
+            var imgInfo = _project.Images[index];
+            var imgPath = _project.GetImageAbsolutePath(imgInfo);
+
+            if (File.Exists(imgPath))
             {
-                // Load without locking the file
-                using var stream = File.OpenRead(imgPath);
-                _currentImage = Image.FromStream(stream);
+                try
+                {
+                    // Load without locking the file
+                    using var stream = File.OpenRead(imgPath);
+                    _currentImage = Image.FromStream(stream);
+                }
+                catch (Exception ex)
+                {
+                    StatusChanged?.Invoke(this, $"Failed to load image: {ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                StatusChanged?.Invoke(this, $"Failed to load image: {ex.Message}");
-            }
+
+            canvas.LoadImage(_currentImage, imgInfo.Annotations);
+            RefreshAnnotationGrid();
+            UpdateStatusBar();
+            UpdateImageListSelection();
+
+            tslImageIndex.Text = $"{index + 1} / {_project.Images.Count}";
         }
-
-        canvas.LoadImage(_currentImage, imgInfo.Annotations);
-        RefreshAnnotationGrid();
-        UpdateStatusBar();
-        UpdateImageListSelection();
-
-        tslImageIndex.Text = $"{index + 1} / {_project.Images.Count}";
+        finally
+        {
+            _navigating = false;
+        }
     }
 
     private void UpdateImageListSelection()
@@ -454,20 +468,29 @@ public partial class AnnotationPanel : UserControl
 
     private void Canvas_AnnotationSelected(object? sender, RectAnnotation? annotation)
     {
-        // Highlight in grid
-        if (annotation == null)
+        if (_updatingSelection) return;
+        _updatingSelection = true;
+        try
         {
-            dgvAnnotations.ClearSelection();
-            return;
-        }
+            // Highlight in grid
+            if (annotation == null)
+            {
+                dgvAnnotations.ClearSelection();
+                return;
+            }
 
-        if (_project == null || _currentImageIndex < 0) return;
-        var imgInfo = _project.Images[_currentImageIndex];
-        int idx = imgInfo.Annotations.IndexOf(annotation);
-        if (idx >= 0 && idx < dgvAnnotations.Rows.Count)
+            if (_project == null || _currentImageIndex < 0) return;
+            var imgInfo = _project.Images[_currentImageIndex];
+            int idx = imgInfo.Annotations.IndexOf(annotation);
+            if (idx >= 0 && idx < dgvAnnotations.Rows.Count)
+            {
+                dgvAnnotations.ClearSelection();
+                dgvAnnotations.Rows[idx].Selected = true;
+            }
+        }
+        finally
         {
-            dgvAnnotations.ClearSelection();
-            dgvAnnotations.Rows[idx].Selected = true;
+            _updatingSelection = false;
         }
     }
 
@@ -499,6 +522,7 @@ public partial class AnnotationPanel : UserControl
 
     private void DgvAnnotations_SelectionChanged(object? sender, EventArgs e)
     {
+        if (_updatingSelection) return;
         if (dgvAnnotations.SelectedRows.Count == 0) return;
         if (_project == null || _currentImageIndex < 0) return;
 
@@ -507,7 +531,15 @@ public partial class AnnotationPanel : UserControl
 
         if (rowIdx >= 0 && rowIdx < imgInfo.Annotations.Count)
         {
-            canvas.SelectedAnnotation = imgInfo.Annotations[rowIdx];
+            _updatingSelection = true;
+            try
+            {
+                canvas.SelectedAnnotation = imgInfo.Annotations[rowIdx];
+            }
+            finally
+            {
+                _updatingSelection = false;
+            }
         }
     }
 
@@ -515,9 +547,9 @@ public partial class AnnotationPanel : UserControl
     {
         if (canvas.SelectedAnnotation != null)
         {
-            var annotation = canvas.SelectedAnnotation;
+            // canvas.DeleteSelected() already fires AnnotationDeleted which
+            // is handled by Canvas_AnnotationDeleted, so no need to call it again.
             canvas.DeleteSelected();
-            Canvas_AnnotationDeleted(this, annotation);
         }
     }
 
