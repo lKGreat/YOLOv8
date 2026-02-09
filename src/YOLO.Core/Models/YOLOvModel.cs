@@ -1,5 +1,6 @@
 using TorchSharp;
 using TorchSharp.Modules;
+using YOLO.Core.Abstractions;
 using YOLO.Core.Heads;
 using YOLO.Core.Modules;
 using static TorchSharp.torch;
@@ -8,7 +9,7 @@ using static TorchSharp.torch.nn;
 namespace YOLO.Core.Models;
 
 /// <summary>
-/// Complete YOLOv detection model.
+/// YOLOv8 detection model.
 ///
 /// Architecture:
 ///   Backbone (CSPDarknet):
@@ -40,8 +41,27 @@ namespace YOLO.Core.Models;
 ///   Head:
 ///     22: Detect(P3_out, P4_out, P5_out)
 /// </summary>
-public class YOLOvModel : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[] rawFeats)>
+public class YOLOv8Model : YOLOModel
 {
+    // === Auto-register with ModelRegistry ===
+    static YOLOv8Model()
+    {
+        ModelRegistry.Register("v8", new ModelRegistration(
+            ModelFactory: (nc, variant, device) => new YOLOv8Model("yolov8", nc, variant, device),
+            SupportedVariants: ["n", "s", "m", "l", "x"],
+            Scales: ModelConfig.Scales
+        ));
+    }
+
+    /// <summary>
+    /// Ensure the static constructor has run and v8 is registered.
+    /// </summary>
+    public static void EnsureRegistered()
+    {
+        // Accessing any static member triggers the static constructor.
+        // This method is a no-op but ensures the type is loaded.
+    }
+
     // Backbone layers
     private readonly ConvBlock backbone0;
     private readonly ConvBlock backbone1;
@@ -71,16 +91,23 @@ public class YOLOvModel : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[] 
     public long Ch2 { get; }
     public long Ch3 { get; }
     public long Ch4 { get; }
-    public int NumClasses { get; }
-    public string Variant { get; }
+
+    // === YOLOModel abstract property implementations ===
+    public override string Version => "v8";
+    private readonly string _variant;
+    public override string Variant => _variant;
+    private readonly int _numClasses;
+    public override int NumClasses => _numClasses;
+    public override long[] FeatureChannels => [Ch2, Ch3, Ch4];
+    public override long[] Strides => ModelConfig.DetectionStrides;
 
     public DetectHead Head => detect;
 
-    public YOLOvModel(string name, int nc = 80, string variant = "n", Device? device = null)
+    public YOLOv8Model(string name, int nc = 80, string variant = "n", Device? device = null)
         : base(name)
     {
-        NumClasses = nc;
-        Variant = variant;
+        _numClasses = nc;
+        _variant = variant;
 
         if (!ModelConfig.Scales.TryGetValue(variant, out var scale))
             throw new ArgumentException($"Unknown variant '{variant}'. Use n/s/m/l/x.");
@@ -186,7 +213,7 @@ public class YOLOvModel : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[] 
     /// <summary>
     /// Forward pass for training that returns raw predictions needed for loss.
     /// </summary>
-    public (Tensor rawBox, Tensor rawCls, (long h, long w)[] featureSizes) ForwardTrain(Tensor x)
+    public override (Tensor rawBox, Tensor rawCls, (long h, long w)[] featureSizes) ForwardTrain(Tensor x)
     {
         var (rawBox, rawCls, featureSizes, _) = ForwardTrainWithFeatures(x);
         return (rawBox, rawCls, featureSizes);
@@ -202,7 +229,7 @@ public class YOLOvModel : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[] 
     /// featureSizes: per-level (h, w) array
     /// neckFeatures: [fpn_p3, pan_p4, pan_p5] neck output tensors
     /// </returns>
-    public (Tensor rawBox, Tensor rawCls, (long h, long w)[] featureSizes, Tensor[] neckFeatures)
+    public override (Tensor rawBox, Tensor rawCls, (long h, long w)[] featureSizes, Tensor[] neckFeatures)
         ForwardTrainWithFeatures(Tensor x)
     {
         // === Backbone ===
@@ -238,4 +265,15 @@ public class YOLOvModel : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[] 
 
         return (rawBox, rawCls, featureSizes, [fpn_p3, pan_p4, pan_p5]);
     }
+}
+
+/// <summary>
+/// Backward-compatible alias for YOLOv8Model.
+/// Use YOLOv8Model directly for new code.
+/// </summary>
+[Obsolete("Use YOLOv8Model instead. This alias will be removed in a future version.")]
+public class YOLOvModel : YOLOv8Model
+{
+    public YOLOvModel(string name, int nc = 80, string variant = "n", Device? device = null)
+        : base(name, nc, variant, device) { }
 }

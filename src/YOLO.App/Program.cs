@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using TorchSharp;
+using YOLO.Core.Abstractions;
 using YOLO.Core.Models;
 using YOLO.Core.Utils;
 using YOLO.Data.Datasets;
@@ -12,13 +14,15 @@ namespace YOLO.App;
 
 /// <summary>
 /// YOLO C# TorchSharp CLI Application.
-/// 
+/// Supports multiple model versions (v8, v9, v10, ...) via ModelRegistry.
+///
 /// Usage:
 ///   dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100
 ///   dotnet run -- train --data coco128.yaml --model yolov8n --teacher best.pt --teacher_variant l
 ///   dotnet run -- bench --data coco128.yaml --models n,s,m --epochs 50
 ///   dotnet run -- predict --model best.pt --source image.jpg [--conf 0.25] [--iou 0.45]
 ///   dotnet run -- val --data coco128.yaml --model best.pt
+///   dotnet run -- export --model best.pt --format onnx
 /// </summary>
 public static class Program
 {
@@ -27,6 +31,11 @@ public static class Program
         Console.WriteLine("YOLO C# TorchSharp Implementation");
         Console.WriteLine($"TorchSharp version: {torch.__version__}");
         Console.WriteLine($"CUDA available: {torch.cuda.is_available()}");
+
+        // Ensure model registrations are loaded
+        InitializeRegistry();
+
+        Console.WriteLine($"Registered model versions: {string.Join(", ", ModelRegistry.GetVersions())}");
         Console.WriteLine();
 
         if (args.Length == 0)
@@ -61,13 +70,27 @@ public static class Program
     }
 
     /// <summary>
+    /// Initialize the model registry with all known model versions.
+    /// </summary>
+    private static void InitializeRegistry()
+    {
+        // Trigger static constructors to register model versions
+        YOLOv8Model.EnsureRegistered();
+        // Future: YOLOv9Model.EnsureRegistered();
+        // Future: YOLOv10Model.EnsureRegistered();
+
+        // Register loss factories (done here to avoid circular dependencies)
+        Trainer.RegisterLossFactories();
+    }
+
+    /// <summary>
     /// Run training command.
     /// </summary>
     private static int RunTrain(Dictionary<string, string> options)
     {
         string dataPath = GetRequired(options, "data", "Dataset YAML path is required (--data)");
-        string modelVariant = options.GetValueOrDefault("model", "yolov8n");
-        string variant = ExtractVariant(modelVariant);
+        string modelName = options.GetValueOrDefault("model", "yolov8n");
+        var (version, variant) = ParseModelName(modelName);
 
         int epochs = int.Parse(options.GetValueOrDefault("epochs", "100"));
         int batchSize = int.Parse(options.GetValueOrDefault("batch", "16"));
@@ -103,11 +126,14 @@ public static class Program
             var hypConfig = HyperparamConfig.Load(hypPath);
             trainConfig = hypConfig.ToTrainConfig(dataConfig.Nc, variant,
                 Path.Combine(saveDir, name));
+            // Apply version from CLI
+            trainConfig = trainConfig with { ModelVersion = version };
         }
         else
         {
             trainConfig = new TrainConfig
             {
+                ModelVersion = version,
                 Epochs = epochs,
                 BatchSize = batchSize,
                 ImgSize = imgSize,
@@ -159,6 +185,7 @@ public static class Program
     {
         string dataPath = GetRequired(options, "data", "Dataset YAML path is required (--data)");
         string modelsStr = options.GetValueOrDefault("models", "n,s,m,l,x");
+        string versionStr = options.GetValueOrDefault("version", "v8");
 
         int epochs = int.Parse(options.GetValueOrDefault("epochs", "100"));
         int batchSize = int.Parse(options.GetValueOrDefault("batch", "16"));
@@ -186,6 +213,7 @@ public static class Program
 
         var baseConfig = new TrainConfig
         {
+            ModelVersion = versionStr,
             Epochs = epochs,
             BatchSize = batchSize,
             ImgSize = imgSize,
@@ -219,13 +247,15 @@ public static class Program
         double iou = double.Parse(options.GetValueOrDefault("iou", "0.45"));
         int maxDet = int.Parse(options.GetValueOrDefault("max_det", "300"));
         int nc = int.Parse(options.GetValueOrDefault("nc", "80"));
+
+        string versionStr = options.GetValueOrDefault("version", "v8");
         string variant = ExtractVariant(options.GetValueOrDefault("variant", "n"));
 
         var device = GetDevice(options);
 
         Console.WriteLine($"Loading model: {modelPath}");
 
-        using var model = new YOLOvModel("yolov8", nc, variant, device);
+        using var model = ModelRegistry.Create(versionStr, nc, variant, device);
         if (File.Exists(modelPath))
         {
             WeightLoader.SmartLoad(model, modelPath);
@@ -293,6 +323,8 @@ public static class Program
         int batchSize = int.Parse(options.GetValueOrDefault("batch", "16"));
         double conf = double.Parse(options.GetValueOrDefault("conf", "0.001"));
         double iou = double.Parse(options.GetValueOrDefault("iou", "0.7"));
+
+        string versionStr = options.GetValueOrDefault("version", "v8");
         string variant = ExtractVariant(options.GetValueOrDefault("variant", "n"));
 
         var device = GetDevice(options);
@@ -309,7 +341,7 @@ public static class Program
         }
 
         Console.WriteLine($"Loading model: {modelPath}");
-        using var model = new YOLOvModel("yolov8", dataConfig.Nc, variant, device);
+        using var model = ModelRegistry.Create(versionStr, dataConfig.Nc, variant, device);
         if (File.Exists(modelPath))
         {
             WeightLoader.SmartLoad(model, modelPath);
@@ -446,16 +478,69 @@ public static class Program
     }
 
     /// <summary>
-    /// Export model (placeholder for future ONNX export).
+    /// Export model (placeholder for ONNX/TorchScript export).
     /// </summary>
     private static int RunExport(Dictionary<string, string> options)
     {
-        Console.WriteLine("Export is not yet implemented. Coming soon!");
+        Console.WriteLine("Export is not yet fully implemented.");
+        Console.WriteLine("Use the YOLO.Export project or YOLO.WinForms application for export functionality.");
+        Console.WriteLine();
+        Console.WriteLine("Planned formats: ONNX, TorchScript");
         return 0;
     }
 
     /// <summary>
+    /// Parse a model name into (version, variant).
+    /// Supports: "yolov8n", "yolov9s", "yolov10m", "v8n", "n" (defaults to v8).
+    /// </summary>
+    internal static (string version, string variant) ParseModelName(string modelName)
+    {
+        modelName = modelName.ToLowerInvariant().Trim();
+
+        // Single letter variant -> default to v8
+        if (modelName.Length == 1 && "nsmlx".Contains(modelName))
+            return ("v8", modelName);
+
+        // Match "yolov{VERSION}{VARIANT}" pattern, e.g. "yolov8n", "yolov10m"
+        var match = Regex.Match(modelName, @"^yolov?(\d+)([nsmlx])$");
+        if (match.Success)
+        {
+            string version = $"v{match.Groups[1].Value}";
+            string variant = match.Groups[2].Value;
+            return (version, variant);
+        }
+
+        // Match "v{VERSION}{VARIANT}", e.g. "v8n", "v10s"
+        match = Regex.Match(modelName, @"^v(\d+)([nsmlx])$");
+        if (match.Success)
+        {
+            string version = $"v{match.Groups[1].Value}";
+            string variant = match.Groups[2].Value;
+            return (version, variant);
+        }
+
+        // Legacy: "yolov8n" style without "v" prefix pattern
+        if (modelName.StartsWith("yolo") && modelName.Length > 4)
+        {
+            string rest = modelName[4..];
+            if (rest.StartsWith("v"))
+                rest = rest[1..];
+
+            // Try to extract version number and variant
+            match = Regex.Match(rest, @"^(\d+)([nsmlx])$");
+            if (match.Success)
+            {
+                return ($"v{match.Groups[1].Value}", match.Groups[2].Value);
+            }
+        }
+
+        Console.WriteLine($"Warning: Could not parse model name '{modelName}', defaulting to v8n");
+        return ("v8", "n");
+    }
+
+    /// <summary>
     /// Extract variant letter from model name (e.g., "yolov8n" -> "n", "n" -> "n").
+    /// For backward compatibility with simple variant strings.
     /// </summary>
     private static string ExtractVariant(string modelName)
     {
@@ -464,15 +549,8 @@ public static class Program
         if (modelName.Length == 1 && "nsmlx".Contains(modelName))
             return modelName;
 
-        if (modelName.StartsWith("yolov8") && modelName.Length > 6)
-        {
-            string suffix = modelName[6..];
-            if (suffix.Length >= 1 && "nsmlx".Contains(suffix[0]))
-                return suffix[0].ToString();
-        }
-
-        Console.WriteLine($"Warning: Could not parse model variant from '{modelName}', defaulting to 'n'");
-        return "n";
+        var (_, variant) = ParseModelName(modelName);
+        return variant;
     }
 
     /// <summary>
@@ -546,10 +624,11 @@ public static class Program
         Console.WriteLine("  bench       Benchmark multiple model variants (n/s/m/l/x)");
         Console.WriteLine("  predict     Run inference on images");
         Console.WriteLine("  val         Validate a model on a dataset");
+        Console.WriteLine("  export      Export model to ONNX/TorchScript");
         Console.WriteLine();
         Console.WriteLine("Train options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
-        Console.WriteLine("  --model <name>       Model variant: yolov8n/s/m/l/x (default: yolov8n)");
+        Console.WriteLine("  --model <name>       Model: yolov8n/yolov9s/yolov10m/... (default: yolov8n)");
         Console.WriteLine("  --epochs <n>         Number of epochs (default: 100)");
         Console.WriteLine("  --batch <n>          Batch size (default: 16)");
         Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
@@ -563,15 +642,16 @@ public static class Program
         Console.WriteLine("  --name <name>        Experiment name (default: exp)");
         Console.WriteLine();
         Console.WriteLine("Distillation options (use with train):");
-        Console.WriteLine("  --teacher <path>           Teacher weights: Python ultralytics .pt or TorchSharp .pt");
-        Console.WriteLine("  --teacher_variant <v>      Teacher architecture variant: n/s/m/l/x (default: l)");
-        Console.WriteLine("  --distill_weight <n>       Distillation loss weight alpha (default: 1.0)");
+        Console.WriteLine("  --teacher <path>           Teacher weights (.pt)");
+        Console.WriteLine("  --teacher_variant <v>      Teacher variant: n/s/m/l/x (default: l)");
+        Console.WriteLine("  --distill_weight <n>       Distillation loss weight (default: 1.0)");
         Console.WriteLine("  --distill_temp <n>         Temperature for soft targets (default: 20)");
         Console.WriteLine("  --distill_mode <mode>      logit/feature/both (default: logit)");
         Console.WriteLine();
         Console.WriteLine("Benchmark options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
         Console.WriteLine("  --models <list>      Comma-separated variants: n,s,m,l,x (default: n,s,m,l,x)");
+        Console.WriteLine("  --version <v>        Model version: v8/v9/v10 (default: v8)");
         Console.WriteLine("  --epochs <n>         Number of epochs (default: 100)");
         Console.WriteLine("  --batch <n>          Batch size (default: 16)");
         Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
@@ -582,29 +662,32 @@ public static class Program
         Console.WriteLine("Predict options:");
         Console.WriteLine("  --model <path>       Model weights path (required)");
         Console.WriteLine("  --source <path>      Image file or directory (required)");
+        Console.WriteLine("  --version <v>        Model version: v8/v9/v10 (default: v8)");
+        Console.WriteLine("  --variant <v>        Model variant: n/s/m/l/x (default: n)");
         Console.WriteLine("  --conf <n>           Confidence threshold (default: 0.25)");
         Console.WriteLine("  --iou <n>            IoU threshold for NMS (default: 0.45)");
         Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
         Console.WriteLine("  --nc <n>             Number of classes (default: 80)");
-        Console.WriteLine("  --variant <v>        Model variant for architecture (default: n)");
         Console.WriteLine("  --device <dev>       Device (default: auto)");
         Console.WriteLine();
         Console.WriteLine("Val options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
         Console.WriteLine("  --model <path>       Model weights path (required)");
+        Console.WriteLine("  --version <v>        Model version: v8/v9/v10 (default: v8)");
+        Console.WriteLine("  --variant <v>        Model variant: n/s/m/l/x (default: n)");
         Console.WriteLine("  --batch <n>          Batch size (default: 16)");
         Console.WriteLine("  --imgsz <n>          Image size (default: 640)");
         Console.WriteLine("  --conf <n>           Confidence threshold (default: 0.001)");
         Console.WriteLine("  --iou <n>            IoU threshold (default: 0.7)");
-        Console.WriteLine("  --variant <v>        Model variant for architecture (default: n)");
         Console.WriteLine("  --device <dev>       Device (default: auto)");
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100");
+        Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov9s --epochs 100");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --teacher yolov8s.pt --teacher_variant s");
-        Console.WriteLine("  dotnet run -- bench --data coco128.yaml --models n,s --epochs 50 --seed 42");
-        Console.WriteLine("  dotnet run -- predict --model runs/train/exp/weights/best.pt --source image.jpg");
-        Console.WriteLine("  dotnet run -- val --data coco128.yaml --model runs/train/exp/weights/best.pt");
+        Console.WriteLine("  dotnet run -- bench --data coco128.yaml --models n,s --version v8 --epochs 50 --seed 42");
+        Console.WriteLine("  dotnet run -- predict --model runs/train/exp/weights/best.pt --source image.jpg --version v8");
+        Console.WriteLine("  dotnet run -- val --data coco128.yaml --model runs/train/exp/weights/best.pt --version v8");
 
         return 0;
     }

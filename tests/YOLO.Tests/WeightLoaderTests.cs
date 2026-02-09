@@ -248,11 +248,11 @@ public class WeightLoaderTests
         try
         {
             // Create and save a model
-            using var model1 = new YOLOvModel("yolov8_save", nc: 3, variant: "n");
+            using var model1 = new YOLOv8Model("yolov8_save", nc: 3, variant: "n");
             model1.save(tempPath);
 
             // Load into a new model
-            using var model2 = new YOLOvModel("yolov8_load", nc: 3, variant: "n");
+            using var model2 = new YOLOv8Model("yolov8_load", nc: 3, variant: "n");
             model2.load(tempPath);
 
             // Verify parameter shapes match
@@ -282,11 +282,11 @@ public class WeightLoaderTests
         try
         {
             // Create and save model
-            using var model1 = new YOLOvModel("yolov8_smart_save", nc: 3, variant: "n");
+            using var model1 = new YOLOv8Model("yolov8_smart_save", nc: 3, variant: "n");
             model1.save(tempPath);
 
             // SmartLoad should detect TorchSharp format
-            using var model2 = new YOLOvModel("yolov8_smart_load", nc: 3, variant: "n");
+            using var model2 = new YOLOv8Model("yolov8_smart_load", nc: 3, variant: "n");
             var result = WeightLoader.SmartLoad(model2, tempPath);
 
             Assert.True(result.LoadedCount > 0);
@@ -448,8 +448,8 @@ public class WeightLoaderTests
 
         int nc = 3;
 
-        using var teacher = new YOLOvModel("teacher", nc, "s");
-        using var student = new YOLOvModel("student", nc, "n");
+        using var teacher = new YOLOv8Model("teacher", nc, "s");
+        using var student = new YOLOv8Model("student", nc, "n");
 
         // Freeze teacher
         teacher.eval();
@@ -547,13 +547,13 @@ public class WeightLoaderTests
             int nc = 3;
 
             // Create and save teacher
-            using (var teacherOrig = new YOLOvModel("teacher_orig", nc, "s"))
+            using (var teacherOrig = new YOLOv8Model("teacher_orig", nc, "s"))
             {
                 teacherOrig.save(tempPath);
             }
 
             // Load teacher using SmartLoad
-            using var teacher = new YOLOvModel("teacher_loaded", nc, "s");
+            using var teacher = new YOLOv8Model("teacher_loaded", nc, "s");
             var loadResult = WeightLoader.SmartLoad(teacher, tempPath);
             Assert.True(loadResult.LoadedCount > 0);
 
@@ -562,7 +562,7 @@ public class WeightLoaderTests
                 p.requires_grad = false;
 
             // Create student
-            using var student = new YOLOvModel("student", nc, "n");
+            using var student = new YOLOv8Model("student", nc, "n");
             student.train();
 
             // Forward pass
@@ -631,7 +631,7 @@ public class WeightLoaderTests
         Assert.True(hasDetectKeys, "Should have detect head keys (model.22.*)");
 
         // Load into model
-        using var model = new YOLOvModel("yolov8s_py", nc: 80, variant: "s");
+        using var model = new YOLOv8Model("yolov8s_py", nc: 80, variant: "s");
         var result = WeightLoader.LoadFromCheckpoint(model, ptPath);
 
         Assert.True(result.LoadedCount > 0, $"Should have loaded parameters, got {result.LoadedCount}");
@@ -656,7 +656,7 @@ public class WeightLoaderTests
     public void ModelParameterNames_IncludeBottlenecks()
     {
         // Verify that C2f bottleneck parameters are properly registered via ModuleList
-        using var model = new YOLOvModel("test_params", nc: 80, variant: "s");
+        using var model = new YOLOv8Model("test_params", nc: 80, variant: "s");
 
         var allNames = new List<string>();
         foreach (var (name, _) in model.named_parameters())
@@ -677,7 +677,7 @@ public class WeightLoaderTests
     public void ModelParameterNames_MatchRemapTargets()
     {
         // Verify that the key remapping produces names that exist in the actual model
-        using var model = new YOLOvModel("test_params", nc: 80, variant: "s");
+        using var model = new YOLOv8Model("test_params", nc: 80, variant: "s");
 
         var paramNames = new HashSet<string>();
         foreach (var (name, _) in model.named_parameters())

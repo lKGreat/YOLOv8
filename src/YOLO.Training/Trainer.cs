@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TorchSharp;
+using YOLO.Core.Abstractions;
 using YOLO.Core.Models;
 using YOLO.Core.Utils;
 using YOLO.Data.Augmentation;
@@ -18,6 +19,8 @@ namespace YOLO.Training;
 /// </summary>
 public record TrainConfig
 {
+    /// <summary>Model version, e.g. "v8", "v9", "v10"</summary>
+    public string ModelVersion { get; init; } = "v8";
     public int Epochs { get; init; } = 100;
     public int BatchSize { get; init; } = 16;
     public int ImgSize { get; init; } = 640;
@@ -64,6 +67,7 @@ public record TrainConfig
 /// </summary>
 public record TrainResult
 {
+    public string ModelVersion { get; init; } = "v8";
     public string ModelVariant { get; init; } = "";
     public long ParamCount { get; init; }
     public int BestEpoch { get; init; }
@@ -76,10 +80,13 @@ public record TrainResult
 }
 
 /// <summary>
-/// YOLOv Trainer implementing the full training pipeline:
+/// YOLO Trainer implementing the full training pipeline.
+/// Uses ModelRegistry to create models and losses for any registered version (v8, v9, v10, ...).
+///
+/// Pipeline:
 ///   - Data loading with mosaic augmentation
 ///   - Forward pass through model
-///   - Detection loss (CIoU + DFL + BCE)
+///   - Detection loss (version-specific via IDetectionLoss)
 ///   - Gradient accumulation, clipping, and optimizer step
 ///   - EMA parameter tracking
 ///   - LR warmup and scheduling (including momentum warmup)
@@ -93,10 +100,28 @@ public class Trainer
     private readonly TrainConfig config;
     private readonly Device device;
 
+    /// <summary>
+    /// Initialize the v8 loss factory in the ModelRegistry.
+    /// Called once at startup to wire loss creation without circular dependencies.
+    /// </summary>
+    public static void RegisterLossFactories()
+    {
+        // Register v8 loss factory
+        if (ModelRegistry.IsRegistered("v8") && !ModelRegistry.HasLossFactory("v8"))
+        {
+            ModelRegistry.RegisterLoss("v8", (nc, boxGain, clsGain, dflGain) =>
+                new DetectionLoss(nc, regMax: 16, strides: null, boxGain, clsGain, dflGain));
+        }
+    }
+
     public Trainer(TrainConfig config, Device? device = null)
     {
         this.config = config;
         this.device = device ?? (torch.cuda.is_available() ? torch.CUDA : torch.CPU);
+
+        // Ensure model registrations are loaded
+        YOLOv8Model.EnsureRegistered();
+        RegisterLossFactories();
     }
 
     /// <summary>
@@ -126,11 +151,11 @@ public class Trainer
         }
 
         Console.WriteLine($"Training on device: {device}");
-        Console.WriteLine($"Model: YOLOv{config.ModelVariant}, Classes: {config.NumClasses}");
+        Console.WriteLine($"Model: YOLO{config.ModelVersion}{config.ModelVariant}, Classes: {config.NumClasses}");
         Console.WriteLine($"Epochs: {config.Epochs}, BatchSize: {config.BatchSize}, ImgSize: {config.ImgSize}");
 
-        // Create model
-        using var model = new YOLOvModel("yolov8", config.NumClasses, config.ModelVariant, device);
+        // Create model via registry
+        using var model = ModelRegistry.Create(config.ModelVersion, config.NumClasses, config.ModelVariant, device);
         model.train();
 
         // Count parameters
@@ -183,14 +208,14 @@ public class Trainer
         // Create EMA (updates both parameters and buffers)
         using var ema = new ModelEMA(model);
 
-        // Create loss
-        var loss = new DetectionLoss(config.NumClasses, regMax: 16, strides: null,
+        // Create loss via registry
+        var loss = ModelRegistry.CreateLoss(config.ModelVersion, config.NumClasses,
             config.BoxGain, config.ClsGain, config.DflGain);
 
         // === Knowledge distillation setup ===
         bool useDistillation = !string.IsNullOrEmpty(config.TeacherModelPath) &&
                                File.Exists(config.TeacherModelPath);
-        YOLOvModel? teacher = null;
+        YOLOModel? teacher = null;
         DistillationLoss? distillLoss = null;
         bool useFeatureDistill = config.DistillMode == "feature" || config.DistillMode == "both";
 
@@ -198,13 +223,13 @@ public class Trainer
         {
             Console.WriteLine();
             Console.WriteLine($"=== Knowledge Distillation ===");
-            Console.WriteLine($"  Teacher: YOLOv{config.TeacherVariant}");
+            Console.WriteLine($"  Teacher: YOLO{config.ModelVersion}{config.TeacherVariant}");
             Console.WriteLine($"  Weights: {config.TeacherModelPath}");
             Console.WriteLine($"  Mode:    {config.DistillMode}");
             Console.WriteLine($"  Weight:  {config.DistillWeight}");
             Console.WriteLine($"  Temp:    {config.DistillTemperature}");
 
-            teacher = new YOLOvModel("teacher", config.NumClasses, config.TeacherVariant, device);
+            teacher = ModelRegistry.Create(config.ModelVersion, config.NumClasses, config.TeacherVariant, device);
 
             // Smart load: auto-detects Python PyTorch or TorchSharp format
             var loadResult = WeightLoader.SmartLoad(teacher, config.TeacherModelPath!);
@@ -223,12 +248,8 @@ public class Trainer
             Console.WriteLine($"  Teacher params: {teacherParams:N0}");
 
             // Create adaptation layers for feature distillation
-            long[]? studentCh = useFeatureDistill
-                ? [model.Ch2, model.Ch3, model.Ch4]
-                : null;
-            long[]? teacherCh = useFeatureDistill
-                ? [teacher.Ch2, teacher.Ch3, teacher.Ch4]
-                : null;
+            long[]? studentCh = useFeatureDistill ? model.FeatureChannels : null;
+            long[]? teacherCh = useFeatureDistill ? teacher.FeatureChannels : null;
 
             distillLoss = new DistillationLoss(
                 "distill_loss",
@@ -502,11 +523,11 @@ public class Trainer
         }
 
         Console.WriteLine("=== Training Summary ===");
-        Console.WriteLine($"  Model:         YOLOv{config.ModelVariant}");
+        Console.WriteLine($"  Model:         YOLO{config.ModelVersion}{config.ModelVariant}");
         Console.WriteLine($"  Parameters:    {totalParams:N0}");
         if (useDistillation)
         {
-            Console.WriteLine($"  Teacher:       YOLOv{config.TeacherVariant} ({config.DistillMode} distillation)");
+            Console.WriteLine($"  Teacher:       YOLO{config.ModelVersion}{config.TeacherVariant} ({config.DistillMode} distillation)");
         }
         Console.WriteLine($"  Best epoch:    {bestEpoch}");
         Console.WriteLine($"  Best fitness:  {bestFitness:F4}");
@@ -521,6 +542,7 @@ public class Trainer
 
         return new TrainResult
         {
+            ModelVersion = config.ModelVersion,
             ModelVariant = config.ModelVariant,
             ParamCount = totalParams,
             BestEpoch = bestEpoch,
@@ -537,7 +559,7 @@ public class Trainer
     /// Run validation and compute mAP.
     /// </summary>
     private (double map50, double map5095, double[] perClassAP50) Validate(
-        YOLOvModel model, ModelEMA ema, YOLODataset valDataset,
+        YOLOModel model, ModelEMA ema, YOLODataset valDataset,
         int numClasses, int imgSize)
     {
         ema.ApplyTo(model);

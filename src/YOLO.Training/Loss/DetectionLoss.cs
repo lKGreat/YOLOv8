@@ -1,5 +1,6 @@
 using TorchSharp;
 using TorchSharp.Modules;
+using YOLO.Core.Abstractions;
 using YOLO.Core.Models;
 using YOLO.Core.Modules;
 using YOLO.Core.Utils;
@@ -9,7 +10,7 @@ using static TorchSharp.torch.nn;
 namespace YOLO.Training.Loss;
 
 /// <summary>
-/// YOLOv Detection Loss.
+/// YOLOv8 Detection Loss.
 /// Combines:
 ///   - CIoU loss for bounding box regression (weight: 7.5)
 ///   - Distribution Focal Loss (DFL) for box distribution (weight: 1.5)
@@ -17,8 +18,10 @@ namespace YOLO.Training.Loss;
 ///
 /// Uses TaskAlignedAssigner for dynamic label assignment.
 /// </summary>
-public class DetectionLoss
+public class DetectionLoss : IDetectionLoss
 {
+    /// <inheritdoc />
+    public string[] LossNames => ["box", "cls", "dfl"];
     private readonly TaskAlignedAssigner assigner;
     private readonly BboxLoss bboxLoss;
     private readonly DFL dfl;

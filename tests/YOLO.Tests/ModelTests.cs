@@ -116,7 +116,7 @@ public class ModelTests
     [Fact]
     public void YOLOvModel_Nano_ForwardShape()
     {
-        using var model = new YOLOvModel("yolov8n_test", nc: 80, variant: "n");
+        using var model = new YOLOv8Model("yolov8n_test", nc: 80, variant: "n");
         using var input = torch.randn(1, 3, 640, 640);
 
         var (boxes, scores, rawFeats) = model.forward(input);
@@ -134,7 +134,7 @@ public class ModelTests
     [Fact]
     public void YOLOvModel_Small_ForwardShape()
     {
-        using var model = new YOLOvModel("yolov8s_test", nc: 80, variant: "s");
+        using var model = new YOLOv8Model("yolov8s_test", nc: 80, variant: "s");
         using var input = torch.randn(1, 3, 640, 640);
 
         var (boxes, scores, rawFeats) = model.forward(input);
@@ -151,7 +151,7 @@ public class ModelTests
     [Fact]
     public void YOLOvModel_BatchForward()
     {
-        using var model = new YOLOvModel("yolov8n_batch", nc: 20, variant: "n");
+        using var model = new YOLOv8Model("yolov8n_batch", nc: 20, variant: "n");
         using var input = torch.randn(4, 3, 640, 640);
 
         var (boxes, scores, rawFeats) = model.forward(input);
@@ -278,7 +278,7 @@ public class ModelTests
     [Fact]
     public void YOLOvModel_ParameterCount_Reasonable()
     {
-        using var model = new YOLOvModel("yolov8n_params", nc: 80, variant: "n");
+        using var model = new YOLOv8Model("yolov8n_params", nc: 80, variant: "n");
         long totalParams = model.parameters().Sum(p => p.numel());
 
         // YOLOv8n should have ~3M parameters

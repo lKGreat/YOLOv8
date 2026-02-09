@@ -2,7 +2,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using TorchSharp;
-using YOLO.Core.Models;
+using YOLO.Core.Abstractions;
 using YOLO.Inference.PostProcess;
 using static TorchSharp.torch;
 
@@ -19,7 +19,7 @@ public record Detection(float X1, float Y1, float X2, float Y2, float Confidence
 /// </summary>
 public class Predictor : IDisposable
 {
-    private readonly YOLOvModel model;
+    private readonly YOLOModel model;
     private readonly Device device;
     private readonly int imgSize;
     private readonly double confThreshold;
@@ -30,7 +30,7 @@ public class Predictor : IDisposable
     /// <summary>
     /// Create a predictor from a model.
     /// </summary>
-    public Predictor(YOLOvModel model, int imgSize = 640,
+    public Predictor(YOLOModel model, int imgSize = 640,
         double confThreshold = 0.25, double iouThreshold = 0.45,
         int maxDet = 300, Device? device = null)
     {

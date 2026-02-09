@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using TorchSharp;
+using YOLO.Core.Abstractions;
 using YOLO.Core.Models;
 using static TorchSharp.torch;
 
@@ -56,7 +57,7 @@ public static class WeightLoader
     /// <returns>
     /// A LoadResult containing counts of loaded, skipped, and missing parameters
     /// </returns>
-    public static LoadResult LoadFromCheckpoint(YOLOvModel model, string checkpointPath, bool strict = false)
+    public static LoadResult LoadFromCheckpoint(YOLOModel model, string checkpointPath, bool strict = false)
     {
         Console.WriteLine($"  Loading weights from: {checkpointPath}");
 
@@ -278,7 +279,7 @@ public static class WeightLoader
     /// Save a YOLOv model in TorchSharp native format.
     /// The saved file can be loaded directly with model.load().
     /// </summary>
-    public static void SaveTorchSharp(YOLOvModel model, string path)
+    public static void SaveTorchSharp(YOLOModel model, string path)
     {
         model.save(path);
         Console.WriteLine($"  Model saved to: {path} (TorchSharp format)");
@@ -287,7 +288,7 @@ public static class WeightLoader
     /// <summary>
     /// Load a YOLOv model from TorchSharp native format.
     /// </summary>
-    public static void LoadTorchSharp(YOLOvModel model, string path)
+    public static void LoadTorchSharp(YOLOModel model, string path)
     {
         model.load(path);
         Console.WriteLine($"  Model loaded from: {path} (TorchSharp format)");
@@ -329,7 +330,7 @@ public static class WeightLoader
     /// <summary>
     /// Smart load: auto-detects the format and loads weights accordingly.
     /// </summary>
-    public static LoadResult SmartLoad(YOLOvModel model, string path, bool strict = false)
+    public static LoadResult SmartLoad(YOLOModel model, string path, bool strict = false)
     {
         var format = DetectFormat(path);
         Console.WriteLine($"  Detected format: {format}");
