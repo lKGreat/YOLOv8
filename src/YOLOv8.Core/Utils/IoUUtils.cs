@@ -52,20 +52,21 @@ public static class IoUUtils
     public static Tensor BatchBoxIoU(Tensor box1, Tensor box2, double eps = 1e-7)
     {
         // box1: (N, 4), box2: (M, 4)
-        var a1 = box1.unsqueeze(1); // (N, 1, 4)
-        var a2 = box2.unsqueeze(0); // (1, M, 4)
+        // Split into coordinate components first
+        var b1 = box1.unsqueeze(1).chunk(4, dim: -1); // 4 x (N, 1, 1)
+        var b2 = box2.unsqueeze(0).chunk(4, dim: -1); // 4 x (1, M, 1)
 
-        var inter_x1 = torch.max(a1[.., 0], a2[.., 0]);
-        var inter_y1 = torch.max(a1[.., 1], a2[.., 1]);
-        var inter_x2 = torch.min(a1[.., 2], a2[.., 2]);
-        var inter_y2 = torch.min(a1[.., 3], a2[.., 3]);
+        var inter_x1 = torch.max(b1[0], b2[0]);
+        var inter_y1 = torch.max(b1[1], b2[1]);
+        var inter_x2 = torch.min(b1[2], b2[2]);
+        var inter_y2 = torch.min(b1[3], b2[3]);
 
         var inter = (inter_x2 - inter_x1).clamp_min(0) * (inter_y2 - inter_y1).clamp_min(0);
 
-        var area1 = (a1[.., 2] - a1[.., 0]) * (a1[.., 3] - a1[.., 1]);
-        var area2 = (a2[.., 2] - a2[.., 0]) * (a2[.., 3] - a2[.., 1]);
+        var area1 = (b1[2] - b1[0]) * (b1[3] - b1[1]);
+        var area2 = (b2[2] - b2[0]) * (b2[3] - b2[1]);
 
-        return inter / (area1 + area2 - inter + eps);
+        return (inter / (area1 + area2 - inter + eps)).squeeze(-1);
     }
 
     /// <summary>
