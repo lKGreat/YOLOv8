@@ -43,6 +43,7 @@ public static class Program
                 "predict" or "detect" => RunPredict(options),
                 "val" or "validate" => RunValidate(options),
                 "export" => RunExport(options),
+                "generate-data" => RunGenerateData(options),
                 "--help" or "-h" or "help" => PrintUsage(),
                 _ => PrintUnknownCommand(command)
             };
@@ -359,6 +360,21 @@ public static class Program
             }
         }
 
+        return 0;
+    }
+
+    /// <summary>
+    /// Generate synthetic test data for training validation.
+    /// </summary>
+    private static int RunGenerateData(Dictionary<string, string> options)
+    {
+        string outputDir = options.GetValueOrDefault("output", "testdata") ?? "testdata";
+        int numTrain = int.Parse(options.GetValueOrDefault("num_train", "32") ?? "32");
+        int numVal = int.Parse(options.GetValueOrDefault("num_val", "8") ?? "8");
+        int imgSize = int.Parse(options.GetValueOrDefault("imgsz", "128") ?? "128");
+        int nc = int.Parse(options.GetValueOrDefault("nc", "3") ?? "3");
+
+        TestDataGenerator.Generate(outputDir, numTrain, numVal, imgSize, nc);
         return 0;
     }
 

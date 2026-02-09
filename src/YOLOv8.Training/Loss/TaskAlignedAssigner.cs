@@ -219,7 +219,8 @@ public class TaskAlignedAssigner
 
         // Create mask of top-k positions
         var mask = torch.zeros_like(alignMetric);
-        mask.scatter_(-1, topkIndices, 1.0);
+        var ones = torch.ones_like(topkValues); // same dtype/device as mask
+        mask.scatter_(-1, topkIndices, ones);
 
         return mask;
     }

@@ -121,14 +121,14 @@ public class DetectionLoss
             dflLossVal = torch.zeros(1, device: device);
         }
 
-        // Apply loss gains
-        var totalBoxLoss = iouLoss * boxGain;
-        var totalClsLoss = clsLoss * clsGain;
-        var totalDflLoss = dflLossVal * dflGain;
+        // Apply loss gains - ensure all are scalar tensors
+        var totalBoxLoss = iouLoss.reshape(1) * boxGain;
+        var totalClsLoss = clsLoss.reshape(1) * clsGain;
+        var totalDflLoss = dflLossVal.reshape(1) * dflGain;
 
-        var totalLoss = (totalBoxLoss + totalClsLoss + totalDflLoss) * batch;
+        var totalLoss = (totalBoxLoss + totalClsLoss + totalDflLoss).sum() * batch;
 
-        var lossItems = torch.stack([
+        var lossItems = torch.cat([
             totalBoxLoss.detach(),
             totalClsLoss.detach(),
             totalDflLoss.detach()

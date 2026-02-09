@@ -126,10 +126,18 @@ public class DetectHead : Module<Tensor[], (Tensor boxes, Tensor scores, Tensor[
     {
         long totalAnchors = featureSizes.Sum(fs => fs.h * fs.w);
 
-        if (_anchorPoints is null || _anchorPoints.shape[0] != totalAnchors ||
+        if (_anchorPoints is null || _anchorPoints.IsInvalid || _anchorPoints.shape[0] != totalAnchors ||
             _anchorPoints.device != device)
         {
-            (_anchorPoints, _strideTensor) = BboxUtils.MakeAnchors(featureSizes, Strides, 0.5, device);
+            // Dispose old cached tensors
+            _anchorPoints?.Dispose();
+            _strideTensor?.Dispose();
+
+            var (ap, st) = BboxUtils.MakeAnchors(featureSizes, Strides, 0.5, device);
+
+            // Detach from any DisposeScope so they persist across scopes
+            _anchorPoints = ap.DetachFromDisposeScope();
+            _strideTensor = st.DetachFromDisposeScope();
         }
 
         return (_anchorPoints, _strideTensor!);
