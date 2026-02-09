@@ -152,6 +152,10 @@ public class HyperparamConfig
     [YamlMember(Alias = "agnostic_nms")]
     public bool AgnosticNms { get; set; } = false;
 
+    // --- Reproducibility ---
+    [YamlMember(Alias = "seed")]
+    public int Seed { get; set; } = 0;
+
     /// <summary>
     /// Load hyperparameters from a YAML file.
     /// </summary>
@@ -202,7 +206,8 @@ public class HyperparamConfig
             FlipUD = FlipUD,
             Scale = Scale,
             Translate = Translate,
-            SaveDir = saveDir
+            SaveDir = saveDir,
+            Seed = Seed
         };
     }
 }

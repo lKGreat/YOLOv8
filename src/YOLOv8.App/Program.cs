@@ -72,7 +72,7 @@ public static class Program
         int imgSize = int.Parse(options.GetValueOrDefault("imgsz", "640"));
         string saveDir = options.GetValueOrDefault("project", "runs/train");
         string name = options.GetValueOrDefault("name", "exp");
-        string? hypPath = options.GetValueOrDefault("hyp", null);
+        string? hypPath = options.TryGetValue("hyp", out var hypVal) ? hypVal : null;
         string optimizer = options.GetValueOrDefault("optimizer", "auto");
         double lr0 = double.Parse(options.GetValueOrDefault("lr0", "0.01"));
         bool cosLr = options.ContainsKey("cos_lr");
