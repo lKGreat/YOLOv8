@@ -14,6 +14,7 @@ namespace YOLOv8.App;
 /// 
 /// Usage:
 ///   dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100
+///   dotnet run -- train --data coco128.yaml --model yolov8n --teacher best.pt --teacher_variant l
 ///   dotnet run -- bench --data coco128.yaml --models n,s,m --epochs 50
 ///   dotnet run -- predict --model best.pt --source image.jpg [--conf 0.25] [--iou 0.45]
 ///   dotnet run -- val --data coco128.yaml --model best.pt
@@ -78,6 +79,13 @@ public static class Program
         bool cosLr = options.ContainsKey("cos_lr");
         int seed = int.Parse(options.GetValueOrDefault("seed", "0"));
 
+        // Distillation options
+        string? teacherPath = options.TryGetValue("teacher", out var tVal) ? tVal : null;
+        string teacherVariant = ExtractVariant(options.GetValueOrDefault("teacher_variant", "l"));
+        double distillWeight = double.Parse(options.GetValueOrDefault("distill_weight", "1.0"));
+        double distillTemp = double.Parse(options.GetValueOrDefault("distill_temp", "20"));
+        string distillMode = options.GetValueOrDefault("distill_mode", "logit");
+
         // Load dataset config
         Console.WriteLine($"Loading dataset config: {dataPath}");
         var dataConfig = DatasetConfig.Load(dataPath);
@@ -121,6 +129,19 @@ public static class Program
             trainConfig = trainConfig with { ImgSize = imgSize };
         if (options.ContainsKey("seed"))
             trainConfig = trainConfig with { Seed = seed };
+
+        // Apply distillation settings
+        if (teacherPath != null)
+        {
+            trainConfig = trainConfig with
+            {
+                TeacherModelPath = teacherPath,
+                TeacherVariant = teacherVariant,
+                DistillWeight = distillWeight,
+                DistillTemperature = distillTemp,
+                DistillMode = distillMode
+            };
+        }
 
         var device = GetDevice(options);
 
@@ -542,6 +563,13 @@ public static class Program
         Console.WriteLine("  --project <dir>      Save results to project/name (default: runs/train)");
         Console.WriteLine("  --name <name>        Experiment name (default: exp)");
         Console.WriteLine();
+        Console.WriteLine("Distillation options (use with train):");
+        Console.WriteLine("  --teacher <path>           Path to pretrained teacher model weights (.pt)");
+        Console.WriteLine("  --teacher_variant <v>      Teacher architecture variant: n/s/m/l/x (default: l)");
+        Console.WriteLine("  --distill_weight <n>       Distillation loss weight alpha (default: 1.0)");
+        Console.WriteLine("  --distill_temp <n>         Temperature for soft targets (default: 20)");
+        Console.WriteLine("  --distill_mode <mode>      logit/feature/both (default: logit)");
+        Console.WriteLine();
         Console.WriteLine("Benchmark options:");
         Console.WriteLine("  --data <path>        Dataset YAML file (required)");
         Console.WriteLine("  --models <list>      Comma-separated variants: n,s,m,l,x (default: n,s,m,l,x)");
@@ -574,6 +602,7 @@ public static class Program
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --epochs 100");
+        Console.WriteLine("  dotnet run -- train --data coco128.yaml --model yolov8n --teacher best.pt --teacher_variant l");
         Console.WriteLine("  dotnet run -- bench --data coco128.yaml --models n,s --epochs 50 --seed 42");
         Console.WriteLine("  dotnet run -- predict --model runs/train/exp/weights/best.pt --source image.jpg");
         Console.WriteLine("  dotnet run -- val --data coco128.yaml --model runs/train/exp/weights/best.pt");

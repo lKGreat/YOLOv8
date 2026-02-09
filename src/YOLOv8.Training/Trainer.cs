@@ -49,6 +49,13 @@ public record TrainConfig
     public float Translate { get; init; } = 0.1f;
     public string SaveDir { get; init; } = "runs/train";
     public int Seed { get; init; } = 0;
+
+    // Distillation settings
+    public string? TeacherModelPath { get; init; } = null;
+    public string TeacherVariant { get; init; } = "l";
+    public double DistillWeight { get; init; } = 1.0;
+    public double DistillTemperature { get; init; } = 20.0;
+    public string DistillMode { get; init; } = "logit";
 }
 
 /// <summary>
@@ -179,6 +186,60 @@ public class Trainer
         var loss = new DetectionLoss(config.NumClasses, regMax: 16, strides: null,
             config.BoxGain, config.ClsGain, config.DflGain);
 
+        // === Knowledge distillation setup ===
+        bool useDistillation = !string.IsNullOrEmpty(config.TeacherModelPath) &&
+                               File.Exists(config.TeacherModelPath);
+        YOLOv8Model? teacher = null;
+        DistillationLoss? distillLoss = null;
+        bool useFeatureDistill = config.DistillMode == "feature" || config.DistillMode == "both";
+
+        if (useDistillation)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"=== Knowledge Distillation ===");
+            Console.WriteLine($"  Teacher: YOLOv8{config.TeacherVariant}");
+            Console.WriteLine($"  Weights: {config.TeacherModelPath}");
+            Console.WriteLine($"  Mode:    {config.DistillMode}");
+            Console.WriteLine($"  Weight:  {config.DistillWeight}");
+            Console.WriteLine($"  Temp:    {config.DistillTemperature}");
+
+            teacher = new YOLOv8Model("teacher", config.NumClasses, config.TeacherVariant, device);
+            teacher.load(config.TeacherModelPath!);
+            teacher.eval();
+
+            // Freeze all teacher parameters
+            foreach (var p in teacher.parameters())
+                p.requires_grad = false;
+
+            long teacherParams = teacher.parameters().Sum(p => p.numel());
+            Console.WriteLine($"  Teacher params: {teacherParams:N0}");
+
+            // Create adaptation layers for feature distillation
+            long[]? studentCh = useFeatureDistill
+                ? [model.Ch2, model.Ch3, model.Ch4]
+                : null;
+            long[]? teacherCh = useFeatureDistill
+                ? [teacher.Ch2, teacher.Ch3, teacher.Ch4]
+                : null;
+
+            distillLoss = new DistillationLoss(
+                "distill_loss",
+                temperature: config.DistillTemperature,
+                mode: config.DistillMode,
+                studentChannels: studentCh,
+                teacherChannels: teacherCh,
+                device: device);
+
+            // Add distillation adapter parameters to optimizer
+            if (useFeatureDistill)
+            {
+                foreach (var p in distillLoss.parameters())
+                    p.requires_grad = true;
+            }
+
+            Console.WriteLine();
+        }
+
         // Training loop
         int globalIter = 0;
         double bestFitness = 0;
@@ -196,9 +257,18 @@ public class Trainer
 
         // Print header
         Console.WriteLine();
-        Console.WriteLine(string.Format("{0,8} {1,10} {2,10} {3,10} {4,10} {5,10} {6,10}",
-            "Epoch", "box", "cls", "dfl", "mAP50", "mAP50-95", "fitness"));
-        Console.WriteLine(new string('-', 72));
+        if (useDistillation)
+        {
+            Console.WriteLine(string.Format("{0,8} {1,10} {2,10} {3,10} {4,10} {5,10} {6,10} {7,10}",
+                "Epoch", "box", "cls", "dfl", "distill", "mAP50", "mAP50-95", "fitness"));
+            Console.WriteLine(new string('-', 84));
+        }
+        else
+        {
+            Console.WriteLine(string.Format("{0,8} {1,10} {2,10} {3,10} {4,10} {5,10} {6,10}",
+                "Epoch", "box", "cls", "dfl", "mAP50", "mAP50-95", "fitness"));
+            Console.WriteLine(new string('-', 72));
+        }
 
         for (int epoch = 0; epoch < config.Epochs; epoch++)
         {
@@ -212,7 +282,7 @@ public class Trainer
                 mosaicClosed = true;
             }
 
-            double epochBoxLoss = 0, epochClsLoss = 0, epochDflLoss = 0;
+            double epochBoxLoss = 0, epochClsLoss = 0, epochDflLoss = 0, epochDistillLoss = 0;
             int batchCount = 0;
             int lastOptStep = 0;
 
@@ -230,11 +300,57 @@ public class Trainer
 
                 scheduler.Step(epoch, globalIter);
 
-                var (rawBox, rawCls, featureSizes) = model.ForwardTrain(imgs);
+                // Student forward pass
+                Tensor rawBox, rawCls;
+                (long h, long w)[] featureSizes;
+                Tensor[]? studentFeats = null;
 
+                if (useDistillation && useFeatureDistill)
+                {
+                    var result = model.ForwardTrainWithFeatures(imgs);
+                    rawBox = result.rawBox;
+                    rawCls = result.rawCls;
+                    featureSizes = result.featureSizes;
+                    studentFeats = result.neckFeatures;
+                }
+                else
+                {
+                    (rawBox, rawCls, featureSizes) = model.ForwardTrain(imgs);
+                }
+
+                // Detection loss
                 var (totalLoss, lossItems) = loss.Compute(
                     rawBox, rawCls, featureSizes,
                     gtLbls, gtBoxes, mask, config.ImgSize);
+
+                // Distillation loss
+                if (useDistillation && teacher != null && distillLoss != null)
+                {
+                    Tensor tRawBox, tRawCls;
+                    Tensor[]? teacherFeats = null;
+
+                    using (torch.no_grad())
+                    {
+                        if (useFeatureDistill)
+                        {
+                            var tResult = teacher.ForwardTrainWithFeatures(imgs);
+                            tRawBox = tResult.rawBox;
+                            tRawCls = tResult.rawCls;
+                            teacherFeats = tResult.neckFeatures;
+                        }
+                        else
+                        {
+                            (tRawBox, tRawCls, _) = teacher.ForwardTrain(imgs);
+                        }
+                    }
+
+                    var (dLoss, dItem) = distillLoss.Compute(
+                        rawBox, rawCls, tRawBox, tRawCls,
+                        studentFeats, teacherFeats);
+
+                    totalLoss = totalLoss + dLoss * config.DistillWeight;
+                    epochDistillLoss += dItem.item<float>();
+                }
 
                 totalLoss.backward();
 
@@ -254,10 +370,14 @@ public class Trainer
 
                 if (batchCount % 10 == 0 || batchCount == batchesPerEpoch)
                 {
+                    var distillStr = useDistillation
+                        ? $" distill: {epochDistillLoss / batchCount:F4}"
+                        : "";
                     Console.Write($"\r{epoch + 1,5}/{config.Epochs,-3} " +
                         $"{epochBoxLoss / batchCount,10:F4} " +
                         $"{epochClsLoss / batchCount,10:F4} " +
-                        $"{epochDflLoss / batchCount,10:F4} " +
+                        $"{epochDflLoss / batchCount,10:F4}" +
+                        $"{distillStr} " +
                         $"[{batchCount}/{batchesPerEpoch}]         ");
                 }
             }
@@ -286,9 +406,19 @@ public class Trainer
                 currentMap50, currentMap5095, fitness, currentLr);
 
             // Print epoch line
-            Console.Write($"\r{epoch + 1,5}/{config.Epochs,-3} " +
-                $"{avgBox,10:F4} {avgCls,10:F4} {avgDfl,10:F4} " +
-                $"{currentMap50,10:F4} {currentMap5095,10:F4} {fitness,10:F4}");
+            double avgDistill = epochDistillLoss / Math.Max(batchCount, 1);
+            if (useDistillation)
+            {
+                Console.Write($"\r{epoch + 1,5}/{config.Epochs,-3} " +
+                    $"{avgBox,10:F4} {avgCls,10:F4} {avgDfl,10:F4} {avgDistill,10:F4} " +
+                    $"{currentMap50,10:F4} {currentMap5095,10:F4} {fitness,10:F4}");
+            }
+            else
+            {
+                Console.Write($"\r{epoch + 1,5}/{config.Epochs,-3} " +
+                    $"{avgBox,10:F4} {avgCls,10:F4} {avgDfl,10:F4} " +
+                    $"{currentMap50,10:F4} {currentMap5095,10:F4} {fitness,10:F4}");
+            }
 
             // Best model selection by fitness (or loss if no val)
             bool isBest;
@@ -341,8 +471,12 @@ public class Trainer
 
         sw.Stop();
 
+        // Dispose teacher model if used
+        teacher?.Dispose();
+        distillLoss?.Dispose();
+
         // Print training summary
-        Console.WriteLine(new string('-', 72));
+        Console.WriteLine(new string('-', useDistillation ? 84 : 72));
         Console.WriteLine();
 
         // Print per-class AP if available
@@ -362,6 +496,10 @@ public class Trainer
         Console.WriteLine("=== Training Summary ===");
         Console.WriteLine($"  Model:         YOLOv8{config.ModelVariant}");
         Console.WriteLine($"  Parameters:    {totalParams:N0}");
+        if (useDistillation)
+        {
+            Console.WriteLine($"  Teacher:       YOLOv8{config.TeacherVariant} ({config.DistillMode} distillation)");
+        }
         Console.WriteLine($"  Best epoch:    {bestEpoch}");
         Console.WriteLine($"  Best fitness:  {bestFitness:F4}");
         Console.WriteLine($"  Best mAP@0.5:  {bestMap50:F4}");

@@ -188,6 +188,23 @@ public class YOLOv8Model : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[]
     /// </summary>
     public (Tensor rawBox, Tensor rawCls, (long h, long w)[] featureSizes) ForwardTrain(Tensor x)
     {
+        var (rawBox, rawCls, featureSizes, _) = ForwardTrainWithFeatures(x);
+        return (rawBox, rawCls, featureSizes);
+    }
+
+    /// <summary>
+    /// Forward pass for training that returns raw predictions AND neck feature maps.
+    /// Used for knowledge distillation (feature-level matching).
+    /// </summary>
+    /// <returns>
+    /// rawBox: (B, 4*reg_max, N) raw box distributions
+    /// rawCls: (B, nc, N) raw classification logits
+    /// featureSizes: per-level (h, w) array
+    /// neckFeatures: [fpn_p3, pan_p4, pan_p5] neck output tensors
+    /// </returns>
+    public (Tensor rawBox, Tensor rawCls, (long h, long w)[] featureSizes, Tensor[] neckFeatures)
+        ForwardTrainWithFeatures(Tensor x)
+    {
         // === Backbone ===
         var p1 = backbone0.forward(x);
         var p2 = backbone1.forward(p1);
@@ -217,6 +234,8 @@ public class YOLOv8Model : Module<Tensor, (Tensor boxes, Tensor scores, Tensor[]
         var cat4 = torch.cat([down2, p5], dim: 1);
         var pan_p5 = neck_c2f4.forward(cat4);
 
-        return detect.ForwardTrain([fpn_p3, pan_p4, pan_p5]);
+        var (rawBox, rawCls, featureSizes) = detect.ForwardTrain([fpn_p3, pan_p4, pan_p5]);
+
+        return (rawBox, rawCls, featureSizes, [fpn_p3, pan_p4, pan_p5]);
     }
 }

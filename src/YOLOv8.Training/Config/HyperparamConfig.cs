@@ -156,6 +156,16 @@ public class HyperparamConfig
     [YamlMember(Alias = "seed")]
     public int Seed { get; set; } = 0;
 
+    // --- Distillation ---
+    [YamlMember(Alias = "distill_weight")]
+    public double DistillWeight { get; set; } = 1.0;
+
+    [YamlMember(Alias = "distill_temperature")]
+    public double DistillTemperature { get; set; } = 20.0;
+
+    [YamlMember(Alias = "distill_mode")]
+    public string DistillMode { get; set; } = "logit";
+
     /// <summary>
     /// Load hyperparameters from a YAML file.
     /// </summary>
@@ -207,7 +217,10 @@ public class HyperparamConfig
             Scale = Scale,
             Translate = Translate,
             SaveDir = saveDir,
-            Seed = Seed
+            Seed = Seed,
+            DistillWeight = DistillWeight,
+            DistillTemperature = DistillTemperature,
+            DistillMode = DistillMode
         };
     }
 }
