@@ -58,6 +58,7 @@ partial class InferencePanel
         // splitMain
         this.splitMain.Dock = DockStyle.Fill;
         this.splitMain.FixedPanel = FixedPanel.Panel1;
+        this.splitMain.Size = new Size(1200, 700);
         this.splitMain.SplitterDistance = 280;
         this.splitMain.Panel1.Controls.Add(this.grpConfig);
         this.splitMain.Panel2.Controls.Add(this.grpResults);
@@ -224,6 +225,7 @@ partial class InferencePanel
 
         // splitImage
         this.splitImage.Dock = DockStyle.Fill;
+        this.splitImage.Size = new Size(916, 516);
         this.splitImage.SplitterDistance = 400;
         this.splitImage.Panel1.Controls.Add(this.picOriginal);
         this.splitImage.Panel2.Controls.Add(this.picResult);

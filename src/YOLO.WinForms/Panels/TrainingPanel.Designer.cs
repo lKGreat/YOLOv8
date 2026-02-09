@@ -64,6 +64,9 @@ partial class TrainingPanel
         this.splitMain.FixedPanel = FixedPanel.Panel1;
         this.splitMain.Location = new Point(0, 0);
         this.splitMain.Name = "splitMain";
+        this.splitMain.Size = new Size(1200, 700);
+        this.splitMain.Panel1MinSize = 200;
+        this.splitMain.Panel2MinSize = 200;
         this.splitMain.SplitterDistance = 320;
         this.splitMain.Panel1.Controls.Add(this.grpConfig);
         this.splitMain.Panel2.Controls.Add(this.splitRight);
@@ -252,6 +255,9 @@ partial class TrainingPanel
         // splitRight
         this.splitRight.Dock = DockStyle.Fill;
         this.splitRight.Orientation = Orientation.Horizontal;
+        this.splitRight.Size = new Size(876, 700);
+        this.splitRight.Panel1MinSize = 100;
+        this.splitRight.Panel2MinSize = 100;
         this.splitRight.SplitterDistance = 350;
         this.splitRight.Panel1.Controls.Add(this.grpChart);
         this.splitRight.Panel2.Controls.Add(this.grpLog);
