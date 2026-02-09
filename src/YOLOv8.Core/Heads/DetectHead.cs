@@ -45,24 +45,27 @@ public class DetectHead : Module<Tensor[], (Tensor boxes, Tensor scores, Tensor[
         cv2 = new ModuleList<Sequential>();
         cv3 = new ModuleList<Sequential>();
 
+        // Python ultralytics uses ch[0] (smallest channel) to compute c2/c3 for ALL levels
+        long ch0 = channelsPerLevel[0];
+        long c2 = Math.Max(16, Math.Max(ch0 / 4, regMax * 4));
+        long c3Global = Math.Max(ch0, Math.Min(nc, 100));
+
         for (int i = 0; i < channelsPerLevel.Length; i++)
         {
             long ch = channelsPerLevel[i];
 
-            // Box branch: c2 = max(16, ch//4, reg_max * 4)
-            long c2 = Math.Max(16, Math.Max(ch / 4, regMax * 4));
+            // Box branch: c2 is shared across all levels (computed from ch[0])
             cv2.Add(Sequential(
                 ($"cv2_{i}_0", new ConvBlock($"cv2_{i}_0", ch, c2, k: 3, s: 1) as Module<Tensor, Tensor>),
                 ($"cv2_{i}_1", new ConvBlock($"cv2_{i}_1", c2, c2, k: 3, s: 1) as Module<Tensor, Tensor>),
                 ($"cv2_{i}_2", Conv2d(c2, 4 * regMax, 1) as Module<Tensor, Tensor>)
             ));
 
-            // Class branch: c3 = max(ch, min(nc, 100))
-            long c3 = Math.Max(ch, Math.Min(nc, 100));
+            // Class branch: c3 is shared across all levels (computed from ch[0])
             cv3.Add(Sequential(
-                ($"cv3_{i}_0", new ConvBlock($"cv3_{i}_0", ch, c3, k: 3, s: 1) as Module<Tensor, Tensor>),
-                ($"cv3_{i}_1", new ConvBlock($"cv3_{i}_1", c3, c3, k: 3, s: 1) as Module<Tensor, Tensor>),
-                ($"cv3_{i}_2", Conv2d(c3, nc, 1) as Module<Tensor, Tensor>)
+                ($"cv3_{i}_0", new ConvBlock($"cv3_{i}_0", ch, c3Global, k: 3, s: 1) as Module<Tensor, Tensor>),
+                ($"cv3_{i}_1", new ConvBlock($"cv3_{i}_1", c3Global, c3Global, k: 3, s: 1) as Module<Tensor, Tensor>),
+                ($"cv3_{i}_2", Conv2d(c3Global, nc, 1) as Module<Tensor, Tensor>)
             ));
         }
 

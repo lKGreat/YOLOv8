@@ -361,24 +361,24 @@ public class PyTorchCheckpointReader : IDisposable
     {
         if (obj is PythonObject pyObj)
         {
-            // _rebuild_tensor_v2(storage, storage_offset, size, stride, ...)
-            if (pyObj.Type.Name is "_rebuild_tensor_v2" or "_rebuild_tensor" or "_rebuild_parameter" 
-                or "_rebuild_parameter_with_state")
+            // Direct tensor reconstruction: _rebuild_tensor_v2(storage, offset, size, stride, ...)
+            if (pyObj.Type.Name is "_rebuild_tensor_v2" or "_rebuild_tensor")
             {
                 return ParseRebuildTensor(pyObj.Args);
             }
 
-            // Some tensors may be wrapped as Parameters
-            if (pyObj.Type.Name == "Parameter")
+            // Parameter wraps a tensor: _rebuild_parameter(tensor, requires_grad, metadata)
+            // or _rebuild_parameter_with_state(tensor, requires_grad, metadata, state)
+            if (pyObj.Type.Name is "_rebuild_parameter" or "_rebuild_parameter_with_state" or "Parameter")
             {
-                // Parameter wraps a tensor - check args or state
                 if (pyObj.Args?.Count > 0)
                 {
+                    // args[0] is the inner tensor (usually a _rebuild_tensor_v2 PythonObject)
                     return ResolveTensorInfo(pyObj.Args[0]);
                 }
             }
 
-            // _rebuild_parameter_with_state wraps _rebuild_tensor_v2
+            // Fallback: try to resolve from state
             if (pyObj.State != null)
             {
                 return ResolveTensorInfo(pyObj.State);

@@ -177,9 +177,10 @@ public class WeightLoaderTests
     }
 
     [Fact]
-    public void PickleReader_GlobalAndReduce()
+    public void PickleReader_GlobalAndReduce_OrderedDict()
     {
         // Pickle for: collections.OrderedDict() via GLOBAL + EMPTY_TUPLE + REDUCE
+        // OrderedDict is specially handled to return a plain Dictionary for SETITEMS compatibility
         var pickle = new byte[]
         {
             0x80, 0x02,
@@ -197,10 +198,35 @@ public class WeightLoaderTests
         var reader = new PickleReader();
         var result = reader.Load(full);
 
+        // OrderedDict is represented as a plain C# Dictionary for compatibility
+        Assert.IsType<Dictionary<string, object?>>(result);
+    }
+
+    [Fact]
+    public void PickleReader_GlobalAndReduce_CustomClass()
+    {
+        // Pickle for a custom class (not dict-like) via GLOBAL + EMPTY_TUPLE + REDUCE
+        var pickle = new byte[]
+        {
+            0x80, 0x02,
+            0x63, // GLOBAL
+        };
+        var globalBytes = System.Text.Encoding.ASCII.GetBytes("torch._utils\n_rebuild_tensor_v2\n");
+        var rest = new byte[]
+        {
+            0x29, // EMPTY_TUPLE
+            0x52, // REDUCE
+            0x2E  // STOP
+        };
+
+        var full = pickle.Concat(globalBytes).Concat(rest).ToArray();
+        var reader = new PickleReader();
+        var result = reader.Load(full);
+
         Assert.IsType<PythonObject>(result);
         var obj = (PythonObject)result!;
-        Assert.Equal("OrderedDict", obj.Type.Name);
-        Assert.Equal("collections", obj.Type.Module);
+        Assert.Equal("_rebuild_tensor_v2", obj.Type.Name);
+        Assert.Equal("torch._utils", obj.Type.Module);
     }
 
     // === Checkpoint Format Detection ===
@@ -627,29 +653,24 @@ public class WeightLoaderTests
     // === Model Parameter Name Consistency ===
 
     [Fact]
-    public void ModelParameterNames_DumpAll()
+    public void ModelParameterNames_IncludeBottlenecks()
     {
-        // Diagnostic test: dump all parameter and buffer names to understand TorchSharp naming
+        // Verify that C2f bottleneck parameters are properly registered via ModuleList
         using var model = new YOLOv8Model("test_params", nc: 80, variant: "s");
 
         var allNames = new List<string>();
         foreach (var (name, _) in model.named_parameters())
             allNames.Add(name);
-        foreach (var (name, _) in model.named_buffers())
-            allNames.Add(name);
 
-        // Check if ANY parameter contains bottleneck indicators
-        var bottleneckNames = allNames.Where(n =>
-            n.Contains("m.0") || n.Contains("m-0") || n.Contains("_m0") ||
-            n.Contains("m[0]") || n.Contains("bottleneck")).ToList();
-
-        // Also show total count vs expected
-        long totalParams = model.parameters().Sum(p => p.numel());
-
-        string allParamsStr = string.Join("\n", allNames);
+        // C2f modules should have bottleneck parameters registered as m.0.cv1.*, m.0.cv2.*, etc.
+        var bottleneckNames = allNames.Where(n => n.Contains(".m.")).ToList();
         Assert.True(bottleneckNames.Count > 0,
-            $"Should find bottleneck parameters (total params: {totalParams}, total names: {allNames.Count}).\n" +
-            $"All params:\n{allParamsStr}");
+            "C2f bottleneck parameters should be registered via ModuleList (m.0, m.1, etc.)");
+
+        // Verify specific expected bottleneck parameter names
+        Assert.Contains("backbone2.m.0.cv1.conv.weight", allNames);
+        Assert.Contains("backbone4.m.0.cv2.bn.bias", allNames);
+        Assert.Contains("backbone6.m.0.cv1.conv.weight", allNames);
     }
 
     [Fact]
