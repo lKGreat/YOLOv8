@@ -29,6 +29,13 @@ public partial class TrainingPanel : UserControl
         PopulateModelVersions();
         PopulateTeacherVariants();
         WireEvents();
+
+        // Keep tableConfig width synced with scroll container
+        scrollConfig.Resize += (s, e) =>
+        {
+            var scrollBarWidth = SystemInformation.VerticalScrollBarWidth;
+            tableConfig.Width = scrollConfig.ClientSize.Width - scrollBarWidth;
+        };
     }
 
     private void InitializeMetricsChart()

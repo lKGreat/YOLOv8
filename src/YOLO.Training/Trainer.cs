@@ -207,6 +207,22 @@ public class Trainer
             valDataset = new YOLODataset(valDataDir, config.ImgSize, valPipeline, useMosaic: false);
             valDataset.CacheLabels();
             Console.WriteLine($"Validation samples: {valDataset.Count}");
+
+            // If val exists but has 0 GT boxes, mAP is guaranteed to be 0.0.
+            // For tiny datasets (even 1 image), fall back to evaluating on train (val-style pipeline)
+            // so users can confirm the model can overfit/learn.
+            var (valTotalBoxes, _, _) = valDataset.GetLabelStats();
+            if (valTotalBoxes == 0)
+            {
+                Console.WriteLine("  WARNING: Validation set has 0 GT boxes. mAP will always be 0.0.");
+                Console.WriteLine("  Fallback: using TRAIN set (val pipeline) to compute mAP for visibility.");
+
+                var trainValPipeline = AugmentationPipeline.CreateValPipeline(config.ImgSize);
+                var trainAsVal = new YOLODataset(trainDataDir, config.ImgSize, trainValPipeline, useMosaic: false);
+                trainAsVal.CacheLabels();
+                valDataset = trainAsVal;
+                Console.WriteLine($"  Fallback validation samples: {valDataset.Count}");
+            }
         }
 
         int batchesPerEpoch = (trainDataset.Count + config.BatchSize - 1) / config.BatchSize;

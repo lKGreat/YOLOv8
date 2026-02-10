@@ -48,9 +48,22 @@ public class DatasetSplitService
         var rng = new Random(42);
         var shuffled = completed.OrderBy(_ => rng.Next()).ToList();
 
-        int trainCount = (int)Math.Round(shuffled.Count * trainRatio);
-        var trainImages = shuffled.Take(trainCount).ToList();
-        var valImages = shuffled.Skip(trainCount).ToList();
+        // Ensure val set is not empty; for 1 image, duplicate into both train and val
+        List<AnnotationImageInfo> trainImages;
+        List<AnnotationImageInfo> valImages;
+
+        if (shuffled.Count == 1)
+        {
+            trainImages = new List<AnnotationImageInfo> { shuffled[0] };
+            valImages = new List<AnnotationImageInfo> { shuffled[0] };
+        }
+        else
+        {
+            int trainCount = (int)Math.Round(shuffled.Count * trainRatio);
+            trainCount = Math.Clamp(trainCount, 1, shuffled.Count - 1);
+            trainImages = shuffled.Take(trainCount).ToList();
+            valImages = shuffled.Skip(trainCount).ToList();
+        }
 
         int total = shuffled.Count;
         int current = 0;

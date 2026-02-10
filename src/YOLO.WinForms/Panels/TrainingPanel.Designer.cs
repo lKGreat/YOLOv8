@@ -98,7 +98,6 @@ partial class TrainingPanel
         this.panelConfigHeader.Padding = new Padding(8, 8, 0, 0);
 
         // tableConfig
-        this.tableConfig.Dock = DockStyle.Fill;
         this.tableConfig.ColumnCount = 3;
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -106,8 +105,8 @@ partial class TrainingPanel
         this.tableConfig.RowCount = 13;
         for (int i = 0; i < 12; i++)
             this.tableConfig.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
-        // Row 12: distill panel - auto size
-        this.tableConfig.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        // Row 12: distill panel - fixed 200px
+        this.tableConfig.RowStyles.Add(new RowStyle(SizeType.Absolute, 200F));
         this.tableConfig.Padding = new Padding(6, 4, 6, 0);
 
         int row = 0;
@@ -242,7 +241,8 @@ partial class TrainingPanel
         this.lblCosLR.TextAlign = ContentAlignment.MiddleLeft;
         this.lblCosLR.Dock = DockStyle.Fill;
         this.tableConfig.Controls.Add(this.lblCosLR, 0, row);
-        this.chkCosLR.Dock = DockStyle.Left;
+        this.chkCosLR.Size = new Size(50, 28);
+        this.chkCosLR.Anchor = AnchorStyles.Left;
         this.chkCosLR.Checked = false;
         this.tableConfig.Controls.Add(this.chkCosLR, 1, row);
 
@@ -252,13 +252,13 @@ partial class TrainingPanel
         this.lblDistill.TextAlign = ContentAlignment.MiddleLeft;
         this.lblDistill.Dock = DockStyle.Fill;
         this.tableConfig.Controls.Add(this.lblDistill, 0, row);
-        this.chkDistill.Dock = DockStyle.Left;
+        this.chkDistill.Size = new Size(50, 28);
+        this.chkDistill.Anchor = AnchorStyles.Left;
         this.chkDistill.Checked = false;
         this.tableConfig.Controls.Add(this.chkDistill, 1, row);
 
         // ── Distillation detail panel (collapsible) ─────────────
-        this.panelDistill.Dock = DockStyle.None;
-        this.panelDistill.AutoSize = false;
+        this.panelDistill.Dock = DockStyle.Fill;
         this.panelDistill.Visible = false;
 
         var tableDistill = new TableLayoutPanel();
@@ -351,8 +351,22 @@ partial class TrainingPanel
         this.panelButtons.Controls.Add(this.btnStart);
         this.panelButtons.Controls.Add(this.btnStop);
 
+        // Scrollable container for config area
+        this.scrollConfig = new System.Windows.Forms.Panel();
+        this.scrollConfig.Dock = DockStyle.Fill;
+        this.scrollConfig.AutoScroll = true;
+
+        // tableConfig needs AutoSize when inside scroll container
+        this.tableConfig.Dock = DockStyle.None;
+        this.tableConfig.AutoSize = true;
+        this.tableConfig.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        // Set min width to fill the scroll panel
+        this.tableConfig.MinimumSize = new Size(300, 0);
+
+        this.scrollConfig.Controls.Add(this.tableConfig);
+
         // Assemble left panel
-        this.splitMain.Panel1.Controls.Add(this.tableConfig);
+        this.splitMain.Panel1.Controls.Add(this.scrollConfig);
         this.splitMain.Panel1.Controls.Add(this.panelButtons);
         this.splitMain.Panel1.Controls.Add(this.panelConfigHeader);
 
@@ -460,6 +474,7 @@ partial class TrainingPanel
     private AntdUI.Label lblDistillTemp;
     private AntdUI.Input txtDistillTemp;
 
+    private System.Windows.Forms.Panel scrollConfig;
     private FlowLayoutPanel panelButtons;
     private AntdUI.Button btnStart;
     private AntdUI.Button btnStop;

@@ -48,7 +48,7 @@ public class YOLODataset
             .ToArray();
 
         labelPaths = imagePaths
-            .Select(LabelParser.ImageToLabelPath)
+            .Select(LabelParser.ResolveLabelPath)
             .ToArray();
     }
 
@@ -62,11 +62,15 @@ public class YOLODataset
         int missingLabels = 0;
         int emptyLabels = 0;
         int totalBoxes = 0;
+        int firstMissingIdx = -1;
 
         for (int i = 0; i < imagePaths.Length; i++)
         {
             if (!File.Exists(labelPaths[i]))
+            {
                 missingLabels++;
+                if (firstMissingIdx < 0) firstMissingIdx = i;
+            }
 
             labelCache[i] = LabelParser.ParseYOLOLabel(labelPaths[i]);
 
@@ -79,10 +83,10 @@ public class YOLODataset
         if (missingLabels > 0)
         {
             Console.WriteLine($"  WARNING: {missingLabels}/{imagePaths.Length} label files not found!");
-            if (missingLabels > 0 && imagePaths.Length > 0)
+            if (firstMissingIdx >= 0)
             {
-                Console.WriteLine($"    Example image: {imagePaths[0]}");
-                Console.WriteLine($"    Expected label: {labelPaths[0]}");
+                Console.WriteLine($"    Example image: {imagePaths[firstMissingIdx]}");
+                Console.WriteLine($"    Expected label: {labelPaths[firstMissingIdx]}");
             }
         }
 
@@ -92,6 +96,34 @@ public class YOLODataset
         }
 
         Console.WriteLine($"  Total GT boxes: {totalBoxes} across {imagePaths.Length} images");
+    }
+
+    /// <summary>
+    /// Get label statistics for the dataset.
+    /// </summary>
+    public (int totalBoxes, int imagesWithBoxes, int missingLabelFiles) GetLabelStats()
+    {
+        int totalBoxes = 0;
+        int imagesWithBoxes = 0;
+        int missingLabelFiles = 0;
+
+        for (int i = 0; i < imagePaths.Length; i++)
+        {
+            if (!File.Exists(labelPaths[i]))
+                missingLabelFiles++;
+
+            var labels = labelCache != null
+                ? labelCache[i]
+                : LabelParser.ParseYOLOLabel(labelPaths[i]);
+
+            if (labels.Count > 0)
+            {
+                imagesWithBoxes++;
+                totalBoxes += labels.Count;
+            }
+        }
+
+        return (totalBoxes, imagesWithBoxes, missingLabelFiles);
     }
 
     /// <summary>

@@ -25,7 +25,8 @@ public static class LabelParser
             var trimmed = line.Trim();
             if (string.IsNullOrEmpty(trimmed)) continue;
 
-            var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            // Split on any whitespace (space/tab), not just a single space.
+            var parts = trimmed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 5) continue;
 
             // Use InvariantCulture to ensure '.' is always the decimal separator
@@ -73,5 +74,40 @@ public static class LabelParser
         var labelPath = normalized.Replace($"{sep}images{sep}", $"{sep}labels{sep}");
 
         return Path.ChangeExtension(labelPath, ".txt");
+    }
+
+    /// <summary>
+    /// Resolve label path for an image using common YOLO layouts.
+    /// Tries multiple candidates and returns the first existing path.
+    /// If none exists, returns the default YOLO mapping path.
+    /// </summary>
+    public static string ResolveLabelPath(string imagePath)
+    {
+        var normalized = imagePath.Replace('/', Path.DirectorySeparatorChar)
+                                  .Replace('\\', Path.DirectorySeparatorChar);
+        var sep = Path.DirectorySeparatorChar;
+        var baseName = Path.GetFileNameWithoutExtension(normalized) + ".txt";
+        var imageDir = Path.GetDirectoryName(normalized) ?? string.Empty;
+
+        var candidates = new List<string>
+        {
+            // Standard YOLO layout: images/... -> labels/...
+            ImageToLabelPath(normalized),
+            // Same directory as image
+            Path.Combine(imageDir, baseName),
+            // Common alternative: imgs/... -> labels/...
+            Path.ChangeExtension(normalized.Replace($"{sep}imgs{sep}", $"{sep}labels{sep}"), ".txt"),
+            // VOC-like alternative: JPEGImages/... -> labels/...
+            Path.ChangeExtension(normalized.Replace($"{sep}JPEGImages{sep}", $"{sep}labels{sep}"), ".txt")
+        };
+
+        foreach (var p in candidates)
+        {
+            if (File.Exists(p))
+                return p;
+        }
+
+        // Fall back to default mapping for diagnostics
+        return ImageToLabelPath(normalized);
     }
 }
