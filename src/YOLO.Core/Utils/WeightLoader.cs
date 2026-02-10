@@ -18,33 +18,63 @@ namespace YOLO.Core.Utils;
 ///   - Plain state_dict files
 ///   - Automatic fp16 → fp32 conversion
 ///   - Strict and non-strict loading modes
+///   - Detect, Segment, Pose, and Classify model architectures
 /// </summary>
 public static class WeightLoader
 {
     /// <summary>
-    /// Layer index to C# field name mapping for YOLOv architecture.
+    /// Supported model task types for weight mapping.
+    /// </summary>
+    public enum TaskType { Detect, Segment, Pose, Classify }
+
+    /// <summary>
+    /// Layer index to C# field name mapping for detection/segment/pose architecture.
     /// Maps Python's "model.N" prefix to C#'s field name prefix.
     /// </summary>
-    private static readonly Dictionary<int, string> LayerMap = new()
+    private static readonly Dictionary<int, string> DetectLayerMap = new()
     {
-        [0] = "backbone0",     // Conv stem
-        [1] = "backbone1",     // Conv
-        [2] = "backbone2",     // C2f
-        [3] = "backbone3",     // Conv
-        [4] = "backbone4",     // C2f
-        [5] = "backbone5",     // Conv
-        [6] = "backbone6",     // C2f
-        [7] = "backbone7",     // Conv
-        [8] = "backbone8",     // C2f
-        [9] = "backbone9",     // SPPF
+        [0] = "b0",     // Conv stem
+        [1] = "b1",     // Conv
+        [2] = "b2",     // C2f
+        [3] = "b3",     // Conv
+        [4] = "b4",     // C2f
+        [5] = "b5",     // Conv
+        [6] = "b6",     // C2f
+        [7] = "b7",     // Conv
+        [8] = "b8",     // C2f
+        [9] = "b9",     // SPPF
         // Layers 10, 11, 13, 14, 17, 20 are Upsample/Concat (no parameters)
-        [12] = "neck_c2f1",    // C2f (FPN P4)
-        [15] = "neck_c2f2",    // C2f (FPN P3)
-        [16] = "neck_down1",   // Conv (PAN downsample)
-        [18] = "neck_c2f3",    // C2f (PAN P4)
-        [19] = "neck_down2",   // Conv (PAN downsample)
-        [21] = "neck_c2f4",    // C2f (PAN P5)
-        [22] = "detect",       // DetectHead
+        [12] = "n_c2f1",    // C2f (FPN P4)
+        [15] = "n_c2f2",    // C2f (FPN P3)
+        [16] = "n_down1",   // Conv (PAN downsample)
+        [18] = "n_c2f3",    // C2f (PAN P4)
+        [19] = "n_down2",   // Conv (PAN downsample)
+        [21] = "n_c2f4",    // C2f (PAN P5)
+        [22] = "detect",    // DetectHead (also used for seg/pose inner detect)
+    };
+
+    /// <summary>
+    /// Original layer map used by YOLOv8Model (detect-only, uses backbone0..backbone9 naming).
+    /// </summary>
+    private static readonly Dictionary<int, string> LegacyDetectLayerMap = new()
+    {
+        [0] = "backbone0",
+        [1] = "backbone1",
+        [2] = "backbone2",
+        [3] = "backbone3",
+        [4] = "backbone4",
+        [5] = "backbone5",
+        [6] = "backbone6",
+        [7] = "backbone7",
+        [8] = "backbone8",
+        [9] = "backbone9",
+        [12] = "neck_c2f1",
+        [15] = "neck_c2f2",
+        [16] = "neck_down1",
+        [18] = "neck_c2f3",
+        [19] = "neck_down2",
+        [21] = "neck_c2f4",
+        [22] = "detect",
     };
 
     /// <summary>
@@ -59,34 +89,42 @@ public static class WeightLoader
     /// </returns>
     public static LoadResult LoadFromCheckpoint(YOLOModel model, string checkpointPath, bool strict = false)
     {
-        Console.WriteLine($"  Loading weights from: {checkpointPath}");
+        return LoadFromCheckpointGeneric(model, checkpointPath, strict, TaskType.Detect);
+    }
 
-        // Read the checkpoint file
+    /// <summary>
+    /// Load weights from a Python checkpoint into a Seg/Pose/Cls model using the appropriate key map.
+    /// </summary>
+    public static LoadResult LoadFromCheckpoint(nn.Module model, string checkpointPath,
+        TaskType task, bool strict = false)
+    {
+        return LoadFromCheckpointGeneric(model, checkpointPath, strict, task);
+    }
+
+    private static LoadResult LoadFromCheckpointGeneric(nn.Module model, string checkpointPath,
+        bool strict, TaskType task)
+    {
+        Console.WriteLine($"  Loading weights from: {checkpointPath} (task={task})");
+
         using var reader = new PyTorchCheckpointReader(checkpointPath);
         var pyStateDict = reader.ReadStateDict();
 
         Console.WriteLine($"  Found {pyStateDict.Count} tensors in checkpoint");
 
-        // Remap keys from Python naming to C# naming
         var remappedDict = new Dictionary<string, Tensor>();
         var unmappedKeys = new List<string>();
 
         foreach (var (pyKey, tensor) in pyStateDict)
         {
-            var csKey = RemapKey(pyKey);
+            var csKey = RemapKey(pyKey, task);
             if (csKey != null)
-            {
                 remappedDict[csKey] = tensor;
-            }
             else
-            {
                 unmappedKeys.Add(pyKey);
-            }
         }
 
         Console.WriteLine($"  Remapped {remappedDict.Count} keys, {unmappedKeys.Count} unmapped");
 
-        // Get model's parameter names and shapes
         var modelParams = new Dictionary<string, Tensor>();
         foreach (var (name, param) in model.named_parameters())
             modelParams[name] = param;
@@ -100,7 +138,6 @@ public static class WeightLoader
         int missing = 0;
         var missingKeys = new List<string>();
 
-        // Load remapped weights into model parameters
         using (torch.no_grad())
         {
             foreach (var (csKey, tensor) in remappedDict)
@@ -125,7 +162,6 @@ public static class WeightLoader
                 }
             }
 
-            // Check for missing model parameters
             foreach (var name in modelParams.Keys)
             {
                 if (!remappedDict.ContainsKey(name))
@@ -136,7 +172,6 @@ public static class WeightLoader
             }
         }
 
-        // Dispose the checkpoint tensors
         foreach (var tensor in pyStateDict.Values)
             tensor.Dispose();
 
@@ -144,9 +179,7 @@ public static class WeightLoader
 
         Console.WriteLine($"  Loaded: {loaded}, Skipped: {skipped}, Missing: {missing}");
         if (missingKeys.Count > 0 && missingKeys.Count <= 10)
-        {
             Console.WriteLine($"  Missing keys: {string.Join(", ", missingKeys)}");
-        }
 
         if (strict && missing > 0)
         {
@@ -195,38 +228,107 @@ public static class WeightLoader
 
     /// <summary>
     /// Remap a Python-convention parameter key to C# TorchSharp convention.
-    ///
-    /// Examples:
-    ///   "model.0.conv.weight"           → "backbone0.conv.weight"
-    ///   "model.2.m.0.cv1.conv.weight"   → "backbone2.m.0.cv1.conv.weight"
-    ///   "model.22.cv2.0.0.conv.weight"  → "detect.cv2.0.cv2_0_0.conv.weight"
-    ///   "model.22.cv3.1.2.weight"       → "detect.cv3.1.cv3_1_2.weight"
-    ///   "model.22.dfl.conv.weight"       → "detect.dfl.conv.weight"
+    /// Overload for backward compatibility (defaults to Detect task with legacy naming).
     /// </summary>
     public static string? RemapKey(string pythonKey)
     {
-        // Handle "model.N.rest" format (ultralytics model structure)
+        return RemapKey(pythonKey, TaskType.Detect, useLegacyNaming: true);
+    }
+
+    /// <summary>
+    /// Remap a Python-convention parameter key to C# TorchSharp convention.
+    /// Supports Detect, Segment, Pose, and Classify task types.
+    ///
+    /// Examples (Detect):
+    ///   "model.0.conv.weight"           → "b0.conv.weight"
+    ///   "model.22.cv2.0.0.conv.weight"  → "detect.cv2.0.cv2_0_0.conv.weight"
+    ///   "model.22.dfl.conv.weight"      → "detect.dfl.conv.weight"
+    ///
+    /// Examples (Segment):
+    ///   "model.22.proto.cv1.conv.weight" → "segment.proto.cv1.conv.weight"
+    ///   "model.22.cv4.0.0.conv.weight"   → "segment.cv4.0.cv4_0_0.conv.weight"
+    ///
+    /// Examples (Pose):
+    ///   "model.22.cv4.0.0.conv.weight"   → "pose.cv4.0.cv4_0_0.conv.weight"
+    ///
+    /// Examples (Classify):
+    ///   "model.9.cv1.conv.weight"  → "classifyHead.conv.weight" (backbone unchanged)
+    /// </summary>
+    public static string? RemapKey(string pythonKey, TaskType task, bool useLegacyNaming = false)
+    {
         var match = Regex.Match(pythonKey, @"^model\.(\d+)\.(.+)$");
         if (!match.Success)
-        {
-            // Could be a key without "model." prefix (plain state dict)
-            // Try to match directly
             return RemapKeyDirect(pythonKey);
-        }
 
         int layerIndex = int.Parse(match.Groups[1].Value);
         string rest = match.Groups[2].Value;
 
-        if (!LayerMap.TryGetValue(layerIndex, out var csPrefix))
-            return null; // Layer without parameters (Upsample, Concat, etc.)
+        var layerMap = useLegacyNaming ? LegacyDetectLayerMap : DetectLayerMap;
 
-        // Special handling for detect head (layer 22)
-        if (layerIndex == 22)
+        // For Classify models, backbone layers are the same but head is at the last layer
+        if (task == TaskType.Classify)
         {
-            rest = RemapDetectHeadKey(rest);
+            // In classification model, layer 10+ is the Classify head
+            if (layerIndex <= 9)
+            {
+                if (!layerMap.TryGetValue(layerIndex, out var bbPrefix))
+                    return null;
+                return $"{bbPrefix}.{rest}";
+            }
+            // Classify head (typically layer 10 in cls YAML)
+            return $"classifyHead.{rest}";
         }
 
+        // Segment / Pose: layer 22 needs special sub-routing
+        if (layerIndex == 22 && task is TaskType.Segment or TaskType.Pose)
+        {
+            string headPrefix = task == TaskType.Segment ? "segHead" : "poseHead";
+            return RemapTaskHeadKey(rest, headPrefix, task);
+        }
+
+        // Standard detect layer map
+        if (!layerMap.TryGetValue(layerIndex, out var csPrefix))
+            return null;
+
+        if (layerIndex == 22)
+            rest = RemapDetectHeadKey(rest);
+
         return $"{csPrefix}.{rest}";
+    }
+
+    /// <summary>
+    /// Remap Segment/Pose head sub-keys.
+    /// Routes to detect sub-head for cv2/cv3/dfl, and to the task head for cv4/proto.
+    ///
+    /// Python Segment layer 22 keys:
+    ///   "cv2.I.J.rest"        → "{headPrefix}.detect.cv2.I.cv2_I_J.rest"
+    ///   "cv3.I.J.rest"        → "{headPrefix}.detect.cv3.I.cv3_I_J.rest"
+    ///   "dfl.conv.weight"     → "{headPrefix}.detect.dfl.conv.weight"
+    ///   "proto.cv1.conv.weight" → "{headPrefix}.proto.cv1.conv.weight"
+    ///   "cv4.I.J.rest"        → "{headPrefix}.cv4.I.cv4_I_J.rest"
+    /// </summary>
+    private static string? RemapTaskHeadKey(string rest, string headPrefix, TaskType task)
+    {
+        // Proto (Segment only)
+        if (rest.StartsWith("proto."))
+            return $"{headPrefix}.{rest}";
+
+        // cv4 branches (both Segment and Pose)
+        var cv4Match = Regex.Match(rest, @"^cv4\.(\d+)\.(\d+)\.?(.*)$");
+        if (cv4Match.Success)
+        {
+            var levelIdx = cv4Match.Groups[1].Value;
+            var subIdx = cv4Match.Groups[2].Value;
+            var suffix = cv4Match.Groups[3].Value;
+            var csSubName = $"cv4_{levelIdx}_{subIdx}";
+            if (string.IsNullOrEmpty(suffix))
+                return $"{headPrefix}.cv4.{levelIdx}.{csSubName}";
+            return $"{headPrefix}.cv4.{levelIdx}.{csSubName}.{suffix}";
+        }
+
+        // cv2/cv3/dfl → route to inner detect head
+        var detectKey = RemapDetectHeadKey(rest);
+        return $"{headPrefix}.detect.{detectKey}";
     }
 
     /// <summary>
