@@ -27,6 +27,21 @@ public class MLNetDistillationTrainer
     {
         _config = config;
         _mlContext = new MLContext(seed ?? 0);
+
+        // 订阅 ML.NET 内部日志，转发到 Console 以便 GUI 日志面板可见
+        _mlContext.Log += OnMLContextLog;
+    }
+
+    /// <summary>
+    /// ML.NET 内部日志转发。
+    /// </summary>
+    private static void OnMLContextLog(object? sender, LoggingEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(e.Message)) return;
+        var msg = e.Message.Trim();
+        if (msg.StartsWith("Schema") || msg.StartsWith("Column") ||
+            msg.Length > 500) return;
+        Console.WriteLine($"  [{e.Source}] {msg}");
     }
 
     /// <summary>

@@ -57,6 +57,25 @@ public class MLNetDetectionTrainer
     {
         _config = config;
         _mlContext = new MLContext(seed ?? 0);
+
+        // 订阅 ML.NET 内部日志，转发到 Console 以便 GUI 日志面板可见
+        // ObjectDetectionTrainer 的 Step/Loss/LR 日志走 ch.Info()，不走 Console
+        _mlContext.Log += OnMLContextLog;
+    }
+
+    /// <summary>
+    /// ML.NET 内部日志转发。过滤空消息和过于冗长的调试信息。
+    /// </summary>
+    private static void OnMLContextLog(object? sender, LoggingEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(e.Message)) return;
+
+        // 过滤极度冗长的 schema/data 信息，只保留训练相关日志
+        var msg = e.Message.Trim();
+        if (msg.StartsWith("Schema") || msg.StartsWith("Column") ||
+            msg.Length > 500) return;
+
+        Console.WriteLine($"  [{e.Source}] {msg}");
     }
 
     /// <summary>
@@ -165,6 +184,7 @@ public class MLNetDetectionTrainer
                 .ObjectDetection(stageOptions);
 
             Console.WriteLine($"[ML.NET] 训练阶段 {completedEpochs + 1}-{completedEpochs + stageEpochs}/{_config.MaxEpoch}...");
+            Console.WriteLine($"[ML.NET] Fit() 执行中 (AutoFormerV2 ViT 训练较慢，请耐心等待)...");
             var transformer = pipeline.Fit(trainData);
             completedEpochs += stageEpochs;
 

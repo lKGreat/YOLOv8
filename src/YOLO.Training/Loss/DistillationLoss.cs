@@ -209,6 +209,10 @@ public class DistillationLoss : Module<DistillationLoss.DistillInput, (Tensor lo
     /// Compute feature-level distillation loss:
     ///   - MSE between adapted student features and teacher features at each neck level (P3/P4/P5)
     /// </summary>
+    /// <summary>
+    /// Compute feature-level distillation loss:
+    ///   - MSE between adapted student features and teacher features at each neck level (P3/P4/P5)
+    /// </summary>
     private Tensor ComputeFeatureLoss(Tensor[] studentFeatures, Tensor[] teacherFeatures)
     {
         var device = studentFeatures[0].device;
@@ -227,8 +231,11 @@ public class DistillationLoss : Module<DistillationLoss.DistillInput, (Tensor lo
             }
 
             // Normalize features before MSE (stabilizes training)
-            var sNorm = functional.normalize(sFeat.flatten(2), dim: -1); // (B, C, H*W)
-            var tNorm = functional.normalize(tFeat.flatten(2), dim: -1); // (B, C, H*W)
+            // TorchSharp functional may not expose normalize(), so use explicit L2 normalization.
+            var sFlat = sFeat.flatten(2); // (B, C, H*W)
+            var tFlat = tFeat.flatten(2); // (B, C, H*W)
+            var sNorm = sFlat / sFlat.pow(2).sum(dim: -1, keepdim: true).sqrt().clamp_min(1e-6);
+            var tNorm = tFlat / tFlat.pow(2).sum(dim: -1, keepdim: true).sqrt().clamp_min(1e-6);
 
             // MSE loss
             var mse = functional.mse_loss(sNorm, tNorm, reduction: Reduction.Mean);
