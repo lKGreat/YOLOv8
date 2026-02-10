@@ -1,5 +1,5 @@
 using YOLO.WinForms.Controls;
-using YOLO.WinForms.Forms;
+using YOLO.WinForms.Drawers;
 using YOLO.WinForms.Models;
 using YOLO.WinForms.Services;
 
@@ -183,47 +183,19 @@ public partial class AnnotationPanel : UserControl
     // Project management
     // ════════════════════════════════════════════════════════════════
 
-    private void BtnNewProject_Click(object? sender, EventArgs e)
+    private async void BtnNewProject_Click(object? sender, EventArgs e)
     {
-        string? projectName = null;
-        var inputOk = false;
+        if (ParentWindow == null) return;
 
-        if (ParentWindow != null)
-        {
-            var inputControl = new AntdUI.Input
-            {
-                PlaceholderText = "Enter project name...",
-                Dock = DockStyle.Fill,
-            };
-            if (AntdUI.Modal.open(ParentWindow, "New Annotation Project", inputControl) == DialogResult.OK)
-            {
-                projectName = inputControl.Text;
-                inputOk = true;
-            }
-        }
-        else
-        {
-            using var nameDlg = new InputDialog("New Annotation Project", "Project name:");
-            if (nameDlg.ShowDialog() == DialogResult.OK)
-            {
-                projectName = nameDlg.Value;
-                inputOk = true;
-            }
-        }
+        var drawerPanel = new DrawerNewProjectPanel();
+        await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
 
-        if (!inputOk || string.IsNullOrWhiteSpace(projectName))
+        if (!drawerPanel.IsConfirmed || string.IsNullOrWhiteSpace(drawerPanel.ProjectName))
             return;
-
-        using var folderDlg = new FolderBrowserDialog
-        {
-            Description = "Select folder to create the project in",
-            UseDescriptionForTitle = true
-        };
-        if (folderDlg.ShowDialog() != DialogResult.OK) return;
 
         try
         {
-            _project = _projectService.CreateProject(projectName, folderDlg.SelectedPath);
+            _project = _projectService.CreateProject(drawerPanel.ProjectName, drawerPanel.FolderPath);
             LoadProjectUI();
             StatusChanged?.Invoke(this, $"Created project: {_project.Name}");
             ShowMessage($"Project '{_project.Name}' created.", AntdUI.TType.Success);
@@ -312,52 +284,31 @@ public partial class AnnotationPanel : UserControl
     // Class management
     // ════════════════════════════════════════════════════════════════
 
-    private void BtnAddClass_Click(object? sender, EventArgs e)
+    private async void BtnAddClass_Click(object? sender, EventArgs e)
     {
-        if (_project == null) return;
+        if (_project == null || ParentWindow == null) return;
 
-        string? className = null;
-        var inputOk = false;
+        var drawerPanel = new DrawerInputPanel("添加类别", "输入类别名称...");
+        await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
 
-        if (ParentWindow != null)
-        {
-            var inputControl = new AntdUI.Input
-            {
-                PlaceholderText = "Enter class name...",
-                Dock = DockStyle.Fill,
-            };
-            if (AntdUI.Modal.open(ParentWindow, "Add Class", inputControl) == DialogResult.OK)
-            {
-                className = inputControl.Text;
-                inputOk = true;
-            }
-        }
-        else
-        {
-            using var dlg = new InputDialog("Add Class", "Class name:");
-            if (dlg.ShowDialog() == DialogResult.OK)
-            {
-                className = dlg.Value;
-                inputOk = true;
-            }
-        }
-
-        if (!inputOk || string.IsNullOrWhiteSpace(className))
+        if (!drawerPanel.IsConfirmed || string.IsNullOrWhiteSpace(drawerPanel.InputValue))
             return;
 
-        _project.Classes.Add(className.Trim());
+        _project.Classes.Add(drawerPanel.InputValue.Trim());
         RefreshClassList();
     }
 
-    private void BtnRemoveClass_Click(object? sender, EventArgs e)
+    private async void BtnRemoveClass_Click(object? sender, EventArgs e)
     {
         if (_project == null || lstClasses.SelectedIndex < 0) return;
 
         var classNameToRemove = _project.Classes[lstClasses.SelectedIndex];
         if (ParentWindow != null)
         {
-            if (AntdUI.Modal.open(ParentWindow, "Confirm",
-                $"Remove class '{classNameToRemove}'?", AntdUI.TType.Warn) != DialogResult.OK)
+            var drawerPanel = new DrawerConfirmPanel($"确定要删除类别 '{classNameToRemove}' 吗?", "删除确认");
+            await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
+
+            if (!drawerPanel.IsConfirmed)
                 return;
         }
 
@@ -826,9 +777,9 @@ public partial class AnnotationPanel : UserControl
         }
     }
 
-    private void BtnEditConfig_Click(object? sender, EventArgs e)
+    private async void BtnEditConfig_Click(object? sender, EventArgs e)
     {
-        if (_project == null) return;
+        if (_project == null || ParentWindow == null) return;
 
         var yamlPath = Path.Combine(_project.DatasetFolder, "dataset.yaml");
 
@@ -844,10 +795,13 @@ public partial class AnnotationPanel : UserControl
                    $"nc: {_project.Classes.Count}\nnames: [{string.Join(", ", _project.Classes.Select(c => $"'{c}'"))}]\n";
         }
 
-        using var editor = new ConfigEditorForm(text);
-        if (editor.ShowDialog() == DialogResult.OK)
+        var drawerPanel = new DrawerConfigEditorPanel("编辑数据集配置");
+        drawerPanel.YamlText = text;
+        await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
+
+        if (drawerPanel.IsConfirmed)
         {
-            _datasetService.SaveConfigText(yamlPath, editor.YamlText);
+            _datasetService.SaveConfigText(yamlPath, drawerPanel.YamlText);
             StatusChanged?.Invoke(this, "Config saved.");
         }
     }
@@ -928,71 +882,5 @@ public partial class AnnotationPanel : UserControl
                 AntdUI.Message.info(form, text, Font);
                 break;
         }
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════
-// Simple input dialog (fallback when no parent form available)
-// ════════════════════════════════════════════════════════════════════
-
-/// <summary>
-/// Simple single-line input dialog.
-/// </summary>
-internal class InputDialog : Form
-{
-    private readonly TextBox txtInput;
-    private readonly Button btnOk;
-    private readonly Button btnCancel;
-
-    public string Value => txtInput.Text;
-
-    public InputDialog(string title, string prompt)
-    {
-        Text = title;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        StartPosition = FormStartPosition.CenterParent;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ClientSize = new Size(600, 220);
-
-        var lbl = new Label
-        {
-            Text = prompt,
-            Location = new Point(24, 24),
-            AutoSize = true,
-            Font = new Font("Segoe UI", 11F, FontStyle.Regular)
-        };
-
-        txtInput = new TextBox
-        {
-            Location = new Point(24, 60),
-            Size = new Size(540, 32),
-            Font = new Font("Segoe UI", 11F)
-        };
-
-        btnOk = new Button
-        {
-            Text = "确定",
-            DialogResult = DialogResult.OK,
-            Location = new Point(370, 140),
-            Size = new Size(100, 42),
-            Font = new Font("Segoe UI", 11F),
-            FlatStyle = FlatStyle.Standard
-        };
-
-        btnCancel = new Button
-        {
-            Text = "取消",
-            DialogResult = DialogResult.Cancel,
-            Location = new Point(480, 140),
-            Size = new Size(100, 42),
-            Font = new Font("Segoe UI", 11F),
-            FlatStyle = FlatStyle.Standard
-        };
-
-        AcceptButton = btnOk;
-        CancelButton = btnCancel;
-
-        Controls.AddRange([lbl, txtInput, btnOk, btnCancel]);
     }
 }
