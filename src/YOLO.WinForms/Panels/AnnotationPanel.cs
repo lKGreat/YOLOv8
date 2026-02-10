@@ -26,6 +26,12 @@ public partial class AnnotationPanel : UserControl
     /// <summary>Fired when status text should be updated in the main form.</summary>
     public event EventHandler<string>? StatusChanged;
 
+    /// <summary>Fired when dataset is generated and ready for training. Passes the YAML path.</summary>
+    public event Action<string>? DatasetReadyForTraining;
+
+    /// <summary>Helper to get the parent form for AntdUI messages.</summary>
+    private Form? ParentWindow => this.FindForm();
+
     public AnnotationPanel()
     {
         InitializeComponent();
@@ -97,6 +103,7 @@ public partial class AnnotationPanel : UserControl
             if (_project != null) _project.SplitRatio = v / 100.0;
         };
         btnGenerateDataset.Click += BtnGenerateDataset_Click;
+        btnGenerateAndTrain.Click += BtnGenerateAndTrain_Click;
         btnEditConfig.Click += BtnEditConfig_Click;
     }
 
@@ -163,7 +170,6 @@ public partial class AnnotationPanel : UserControl
 
     protected override bool ProcessKeyMessage(ref Message m)
     {
-        // Detect Space key up
         const int WM_KEYUP = 0x0101;
         if (m.Msg == WM_KEYUP && (Keys)m.WParam == Keys.Space)
         {
@@ -178,8 +184,33 @@ public partial class AnnotationPanel : UserControl
 
     private void BtnNewProject_Click(object? sender, EventArgs e)
     {
-        using var nameDlg = new InputDialog("New Annotation Project", "Project name:");
-        if (nameDlg.ShowDialog() != DialogResult.OK || string.IsNullOrWhiteSpace(nameDlg.Value))
+        string? projectName = null;
+        var inputOk = false;
+
+        if (ParentWindow != null)
+        {
+            var inputControl = new AntdUI.Input
+            {
+                PlaceholderText = "Enter project name...",
+                Dock = DockStyle.Fill,
+            };
+            if (AntdUI.Modal.open(ParentWindow, "New Annotation Project", inputControl) == DialogResult.OK)
+            {
+                projectName = inputControl.Text;
+                inputOk = true;
+            }
+        }
+        else
+        {
+            using var nameDlg = new InputDialog("New Annotation Project", "Project name:");
+            if (nameDlg.ShowDialog() == DialogResult.OK)
+            {
+                projectName = nameDlg.Value;
+                inputOk = true;
+            }
+        }
+
+        if (!inputOk || string.IsNullOrWhiteSpace(projectName))
             return;
 
         using var folderDlg = new FolderBrowserDialog
@@ -191,14 +222,14 @@ public partial class AnnotationPanel : UserControl
 
         try
         {
-            _project = _projectService.CreateProject(nameDlg.Value, folderDlg.SelectedPath);
+            _project = _projectService.CreateProject(projectName, folderDlg.SelectedPath);
             LoadProjectUI();
             StatusChanged?.Invoke(this, $"Created project: {_project.Name}");
+            ShowMessage($"Project '{_project.Name}' created.", AntdUI.TType.Success);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to create project: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"Failed to create project: {ex.Message}", AntdUI.TType.Error);
         }
     }
 
@@ -225,8 +256,7 @@ public partial class AnnotationPanel : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to open project: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"Failed to open project: {ex.Message}", AntdUI.TType.Error);
         }
     }
 
@@ -241,8 +271,7 @@ public partial class AnnotationPanel : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to save: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"Failed to save: {ex.Message}", AntdUI.TType.Error);
         }
     }
 
@@ -267,13 +296,15 @@ public partial class AnnotationPanel : UserControl
     private void SetProjectLoaded(bool loaded)
     {
         btnSaveProject.Enabled = loaded;
-        grpClasses.Enabled = loaded;
-        grpImages.Enabled = loaded;
-        grpAnnotations.Enabled = loaded;
-        grpDataset.Enabled = loaded;
-        toolStrip.Enabled = loaded;
+        btnAddClass.Enabled = loaded;
+        btnRemoveClass.Enabled = loaded;
         btnImportImages.Enabled = loaded;
         btnImportPdf.Enabled = loaded;
+        btnGenerateDataset.Enabled = loaded;
+        btnGenerateAndTrain.Enabled = loaded;
+        btnEditConfig.Enabled = loaded;
+        btnDeleteAnnotation.Enabled = loaded;
+        toolbarPanel.Enabled = loaded;
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -284,11 +315,36 @@ public partial class AnnotationPanel : UserControl
     {
         if (_project == null) return;
 
-        using var dlg = new InputDialog("Add Class", "Class name:");
-        if (dlg.ShowDialog() != DialogResult.OK || string.IsNullOrWhiteSpace(dlg.Value))
+        string? className = null;
+        var inputOk = false;
+
+        if (ParentWindow != null)
+        {
+            var inputControl = new AntdUI.Input
+            {
+                PlaceholderText = "Enter class name...",
+                Dock = DockStyle.Fill,
+            };
+            if (AntdUI.Modal.open(ParentWindow, "Add Class", inputControl) == DialogResult.OK)
+            {
+                className = inputControl.Text;
+                inputOk = true;
+            }
+        }
+        else
+        {
+            using var dlg = new InputDialog("Add Class", "Class name:");
+            if (dlg.ShowDialog() == DialogResult.OK)
+            {
+                className = dlg.Value;
+                inputOk = true;
+            }
+        }
+
+        if (!inputOk || string.IsNullOrWhiteSpace(className))
             return;
 
-        _project.Classes.Add(dlg.Value.Trim());
+        _project.Classes.Add(className.Trim());
         RefreshClassList();
     }
 
@@ -296,10 +352,13 @@ public partial class AnnotationPanel : UserControl
     {
         if (_project == null || lstClasses.SelectedIndex < 0) return;
 
-        var className = _project.Classes[lstClasses.SelectedIndex];
-        if (MessageBox.Show($"Remove class '{className}'?", "Confirm",
-            MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-            return;
+        var classNameToRemove = _project.Classes[lstClasses.SelectedIndex];
+        if (ParentWindow != null)
+        {
+            if (AntdUI.Modal.open(ParentWindow, "Confirm",
+                $"Remove class '{classNameToRemove}'?", AntdUI.TType.Warn) != DialogResult.OK)
+                return;
+        }
 
         _project.Classes.RemoveAt(lstClasses.SelectedIndex);
         RefreshClassList();
@@ -335,7 +394,9 @@ public partial class AnnotationPanel : UserControl
         lstImages.BeginUpdate();
         lstImages.Items.Clear();
 
-        var filter = cboImageFilter.SelectedItem?.ToString() ?? "All";
+        var filter = cboImageFilter.SelectedIndex >= 0
+            ? cboImageFilter.Items[cboImageFilter.SelectedIndex]?.ToString() ?? "All"
+            : "All";
         var images = _project.Images.Select((img, idx) => (img, idx)).ToList();
 
         if (filter == "Completed")
@@ -354,6 +415,9 @@ public partial class AnnotationPanel : UserControl
         }
 
         lstImages.EndUpdate();
+
+        // Update progress bar
+        UpdateProgressBar();
     }
 
     private void LstImages_SelectedIndexChanged(object? sender, EventArgs e)
@@ -384,7 +448,6 @@ public partial class AnnotationPanel : UserControl
         _navigating = true;
         try
         {
-            // Save current state
             _currentImageIndex = index;
             _project.LastOpenedImageIndex = index;
             _cmdManager.Clear();
@@ -400,7 +463,6 @@ public partial class AnnotationPanel : UserControl
             {
                 try
                 {
-                    // Load without locking the file
                     using var stream = File.OpenRead(imgPath);
                     _currentImage = Image.FromStream(stream);
                 }
@@ -425,7 +487,6 @@ public partial class AnnotationPanel : UserControl
 
     private void UpdateImageListSelection()
     {
-        // Select the current image in the list view
         foreach (ListViewItem item in lstImages.Items)
         {
             if (item.Tag is int idx && idx == _currentImageIndex)
@@ -472,7 +533,6 @@ public partial class AnnotationPanel : UserControl
         _updatingSelection = true;
         try
         {
-            // Highlight in grid
             if (annotation == null)
             {
                 dgvAnnotations.ClearSelection();
@@ -547,8 +607,6 @@ public partial class AnnotationPanel : UserControl
     {
         if (canvas.SelectedAnnotation != null)
         {
-            // canvas.DeleteSelected() already fires AnnotationDeleted which
-            // is handled by Canvas_AnnotationDeleted, so no need to call it again.
             canvas.DeleteSelected();
         }
     }
@@ -615,14 +673,14 @@ public partial class AnnotationPanel : UserControl
             RefreshImageList();
             UpdateStatusBar();
             StatusChanged?.Invoke(this, $"Imported {count} images.");
+            ShowMessage($"Imported {count} images.", AntdUI.TType.Success);
 
             if (_currentImageIndex < 0 && _project.Images.Count > 0)
                 NavigateToImage(0);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Import failed: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"Import failed: {ex.Message}", AntdUI.TType.Error);
         }
         finally
         {
@@ -649,14 +707,14 @@ public partial class AnnotationPanel : UserControl
             RefreshImageList();
             UpdateStatusBar();
             StatusChanged?.Invoke(this, $"Imported {count} pages from PDF.");
+            ShowMessage($"Imported {count} pages from PDF.", AntdUI.TType.Success);
 
             if (_currentImageIndex < 0 && _project.Images.Count > 0)
                 NavigateToImage(0);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"PDF import failed: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"PDF import failed: {ex.Message}", AntdUI.TType.Error);
         }
         finally
         {
@@ -668,28 +726,26 @@ public partial class AnnotationPanel : UserControl
     // Dataset generation
     // ════════════════════════════════════════════════════════════════
 
-    private void BtnGenerateDataset_Click(object? sender, EventArgs e)
+    private string? GenerateDatasetInternal()
     {
-        if (_project == null) return;
+        if (_project == null) return null;
 
         if (_project.Classes.Count == 0)
         {
-            MessageBox.Show("Please add at least one class before generating the dataset.",
-                "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            ShowMessage("Please add at least one class before generating.", AntdUI.TType.Warn);
+            return null;
         }
 
         if (_project.CompletedCount == 0)
         {
-            MessageBox.Show("No completed images found. Mark some images as complete first.",
-                "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            ShowMessage("No completed images found. Mark images as complete first.", AntdUI.TType.Warn);
+            return null;
         }
 
         try
         {
             Cursor = Cursors.WaitCursor;
-            double ratio = trkSplitRatio.Value / 100.0;
+            double ratio = (double)trkSplitRatio.Value / 100.0;
             _project.SplitRatio = ratio;
 
             // Export labels first
@@ -706,21 +762,40 @@ public partial class AnnotationPanel : UserControl
             StatusChanged?.Invoke(this,
                 $"Dataset generated: {trainCount} train, {valCount} val. Config: {yamlPath}");
 
-            MessageBox.Show(
-                $"Dataset generated successfully!\n\n" +
-                $"Training images: {trainCount}\n" +
-                $"Validation images: {valCount}\n" +
-                $"Config: {yamlPath}",
-                "Dataset Generated", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return yamlPath;
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to generate dataset: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"Failed to generate dataset: {ex.Message}", AntdUI.TType.Error);
+            return null;
         }
         finally
         {
             Cursor = Cursors.Default;
+        }
+    }
+
+    private void BtnGenerateDataset_Click(object? sender, EventArgs e)
+    {
+        var yamlPath = GenerateDatasetInternal();
+        if (yamlPath != null)
+        {
+            ShowMessage("Dataset generated successfully!", AntdUI.TType.Success);
+        }
+    }
+
+    /// <summary>
+    /// Generate dataset and immediately switch to Training tab with the YAML path pre-filled.
+    /// This is the key fix for the annotation -> training workflow.
+    /// </summary>
+    private void BtnGenerateAndTrain_Click(object? sender, EventArgs e)
+    {
+        var yamlPath = GenerateDatasetInternal();
+        if (yamlPath != null)
+        {
+            ShowMessage("Dataset generated! Switching to Training...", AntdUI.TType.Success);
+            // Fire event to switch to training tab with the generated YAML path
+            DatasetReadyForTraining?.Invoke(yamlPath);
         }
     }
 
@@ -737,7 +812,6 @@ public partial class AnnotationPanel : UserControl
         }
         else
         {
-            // Generate a preview
             text = $"# YOLO Dataset Configuration\npath: {_project.DatasetFolder.Replace('\\', '/')}\n" +
                    $"train: images/train\nval: images/val\n" +
                    $"nc: {_project.Classes.Count}\nnames: [{string.Join(", ", _project.Classes.Select(c => $"'{c}'"))}]\n";
@@ -758,12 +832,12 @@ public partial class AnnotationPanel : UserControl
     private void SetMode(CanvasMode mode)
     {
         canvas.Mode = mode;
-        tsbSelect.Checked = mode == CanvasMode.Select;
-        tsbDrawRect.Checked = mode == CanvasMode.DrawRect;
+        tsbSelect.Type = mode == CanvasMode.Select ? AntdUI.TTypeMini.Primary : AntdUI.TTypeMini.Default;
+        tsbDrawRect.Type = mode == CanvasMode.DrawRect ? AntdUI.TTypeMini.Primary : AntdUI.TTypeMini.Default;
     }
 
     // ════════════════════════════════════════════════════════════════
-    // Status
+    // Status / Progress
     // ════════════════════════════════════════════════════════════════
 
     private void UpdateStatusBar()
@@ -790,11 +864,48 @@ public partial class AnnotationPanel : UserControl
         }
 
         lblStatus.Text = $"{_project.Name} | {completed}/{total} completed ({pct:F0}%){imgStatus}{completeMarker}";
+        UpdateProgressBar();
+    }
+
+    private void UpdateProgressBar()
+    {
+        if (_project == null || _project.Images.Count == 0)
+        {
+            progressBar.Value = 0;
+            return;
+        }
+        progressBar.Value = (float)_project.CompletedCount / _project.Images.Count;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // AntdUI Message helper
+    // ════════════════════════════════════════════════════════════════
+
+    private void ShowMessage(string text, AntdUI.TType type)
+    {
+        var form = ParentWindow;
+        if (form == null) return;
+
+        switch (type)
+        {
+            case AntdUI.TType.Success:
+                AntdUI.Message.success(form, text, Font);
+                break;
+            case AntdUI.TType.Error:
+                AntdUI.Message.error(form, text, Font);
+                break;
+            case AntdUI.TType.Warn:
+                AntdUI.Message.warn(form, text, Font);
+                break;
+            default:
+                AntdUI.Message.info(form, text, Font);
+                break;
+        }
     }
 }
 
 // ════════════════════════════════════════════════════════════════════
-// Simple input dialog (reusable)
+// Simple input dialog (fallback when no parent form available)
 // ════════════════════════════════════════════════════════════════════
 
 /// <summary>

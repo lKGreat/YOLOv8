@@ -18,6 +18,8 @@ public partial class InferencePanel : UserControl
 
     public event EventHandler<string>? StatusChanged;
 
+    private Form? ParentWindow => this.FindForm();
+
     public InferencePanel()
     {
         InitializeComponent();
@@ -38,7 +40,8 @@ public partial class InferencePanel : UserControl
 
     private void UpdateVariants()
     {
-        if (cboVersion.SelectedItem is not string version) return;
+        var version = GetSelectedText(cboVersion);
+        if (string.IsNullOrEmpty(version)) return;
         cboVariant.Items.Clear();
         foreach (var v in ModelRegistry.GetVariants(version))
             cboVariant.Items.Add(v);
@@ -63,21 +66,20 @@ public partial class InferencePanel : UserControl
     {
         if (string.IsNullOrWhiteSpace(txtWeights.Text) || !File.Exists(txtWeights.Text))
         {
-            MessageBox.Show("Please select a valid weights file.", "Validation",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowMessage("Please select a valid weights file.", AntdUI.TType.Warn);
             return;
         }
 
         try
         {
             Cursor = Cursors.WaitCursor;
+            btnLoadModel.Loading = true;
             StatusChanged?.Invoke(this, "Loading model...");
 
-            string version = cboVersion.SelectedItem?.ToString() ?? "v8";
-            string variant = cboVariant.SelectedItem?.ToString() ?? "n";
+            string version = GetSelectedText(cboVersion) ?? "v8";
+            string variant = GetSelectedText(cboVariant) ?? "n";
             int nc = (int)numNc.Value;
 
-            // Dispose previous model
             loadedModel?.Dispose();
             loadedModel = null;
             predictor = null;
@@ -90,24 +92,23 @@ public partial class InferencePanel : UserControl
             float iou = float.Parse(txtIouThresh.Text);
 
             predictor = new Predictor(loadedModel, (int)numImgSize.Value, conf, iou);
-
-            // Generate class names (default COCO or numbered)
             classNames = Enumerable.Range(0, nc).Select(i => $"class_{i}").ToArray();
 
             btnSelectImage.Enabled = true;
             btnSelectFolder.Enabled = true;
             StatusChanged?.Invoke(this,
                 $"Model loaded: YOLO{version}{variant} ({nc} classes)");
+            ShowMessage($"Model loaded: YOLO{version}{variant}", AntdUI.TType.Success);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to load model: {ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ShowMessage($"Failed to load model: {ex.Message}", AntdUI.TType.Error);
             StatusChanged?.Invoke(this, $"Load failed: {ex.Message}");
         }
         finally
         {
             Cursor = Cursors.Default;
+            btnLoadModel.Loading = false;
         }
     }
 
@@ -140,7 +141,6 @@ public partial class InferencePanel : UserControl
         {
             StatusChanged?.Invoke(this, $"Image {i + 1}/{files.Length}: {Path.GetFileName(files[i])}");
             await RunInferenceAsync(files[i]);
-            // Small delay to allow UI to update
             await Task.Delay(100);
         }
 
@@ -155,24 +155,20 @@ public partial class InferencePanel : UserControl
         {
             Cursor = Cursors.WaitCursor;
 
-            // Show original image
             using var originalBmp = new Bitmap(imagePath);
             picOriginal.Image?.Dispose();
             picOriginal.Image = new Bitmap(originalBmp);
 
-            // Run inference on background thread
             var detections = await Task.Run(() =>
             {
                 using var scope = torch.NewDisposeScope();
                 return predictor.Predict(imagePath);
             });
 
-            // Draw results
             var resultBmp = DrawDetections(originalBmp, detections);
             picResult.Image?.Dispose();
             picResult.Image = resultBmp;
 
-            // Fill grid
             dgvDetections.Rows.Clear();
             foreach (var det in detections)
             {
@@ -204,7 +200,6 @@ public partial class InferencePanel : UserControl
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // Color palette for classes
         var colors = new[]
         {
             Color.FromArgb(255, 56, 56), Color.FromArgb(255, 157, 151),
@@ -229,7 +224,6 @@ public partial class InferencePanel : UserControl
             float w = det.X2 - det.X1, h = det.Y2 - det.Y1;
             g.DrawRectangle(pen, x, y, w, h);
 
-            // Label background
             string label = det.ClassId < classNames!.Length
                 ? $"{classNames[det.ClassId]} {det.Confidence:P0}"
                 : $"#{det.ClassId} {det.Confidence:P0}";
@@ -242,6 +236,27 @@ public partial class InferencePanel : UserControl
         }
 
         return bmp;
+    }
+
+    private static string? GetSelectedText(AntdUI.Select select)
+    {
+        if (select.SelectedIndex < 0 || select.SelectedIndex >= select.Items.Count)
+            return null;
+        return select.Items[select.SelectedIndex]?.ToString();
+    }
+
+    private void ShowMessage(string text, AntdUI.TType type)
+    {
+        var form = ParentWindow;
+        if (form == null) return;
+
+        switch (type)
+        {
+            case AntdUI.TType.Success: AntdUI.Message.success(form, text, Font); break;
+            case AntdUI.TType.Error: AntdUI.Message.error(form, text, Font); break;
+            case AntdUI.TType.Warn: AntdUI.Message.warn(form, text, Font); break;
+            default: AntdUI.Message.info(form, text, Font); break;
+        }
     }
 
     protected override void Dispose(bool disposing)

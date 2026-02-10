@@ -18,44 +18,48 @@ partial class ExportPanel
         this.components = new System.ComponentModel.Container();
 
         this.tableLayout = new TableLayoutPanel();
-        this.lblWeights = new Label();
-        this.txtWeights = new TextBox();
-        this.btnBrowseWeights = new Button();
-        this.lblVersion = new Label();
-        this.cboVersion = new ComboBox();
-        this.lblVariant = new Label();
-        this.cboVariant = new ComboBox();
-        this.lblNc = new Label();
-        this.numNc = new NumericUpDown();
-        this.lblFormat = new Label();
-        this.cboFormat = new ComboBox();
-        this.lblOutput = new Label();
-        this.txtOutput = new TextBox();
-        this.btnBrowseOutput = new Button();
-        this.lblImgSize = new Label();
-        this.numImgSize = new NumericUpDown();
-        this.chkHalf = new CheckBox();
-        this.chkSimplify = new CheckBox();
-        this.chkDynamic = new CheckBox();
-        this.btnExport = new Button();
-        this.grpLog = new GroupBox();
+        this.lblWeights = new AntdUI.Label();
+        this.txtWeights = new AntdUI.Input();
+        this.btnBrowseWeights = new AntdUI.Button();
+        this.lblVersion = new AntdUI.Label();
+        this.cboVersion = new AntdUI.Select();
+        this.lblVariant = new AntdUI.Label();
+        this.cboVariant = new AntdUI.Select();
+        this.lblNc = new AntdUI.Label();
+        this.numNc = new AntdUI.InputNumber();
+        this.lblFormat = new AntdUI.Label();
+        this.cboFormat = new AntdUI.Select();
+        this.lblOutput = new AntdUI.Label();
+        this.txtOutput = new AntdUI.Input();
+        this.btnBrowseOutput = new AntdUI.Button();
+        this.lblImgSize = new AntdUI.Label();
+        this.numImgSize = new AntdUI.InputNumber();
+        this.chkHalf = new AntdUI.Switch();
+        this.lblHalf = new AntdUI.Label();
+        this.chkSimplify = new AntdUI.Switch();
+        this.lblSimplify = new AntdUI.Label();
+        this.chkDynamic = new AntdUI.Switch();
+        this.lblDynamic = new AntdUI.Label();
+        this.btnExport = new AntdUI.Button();
+        this.panelLogHeader = new AntdUI.Label();
+        this.grpLog = new System.Windows.Forms.Panel();
         this.txtLog = new RichTextBox();
 
-        ((System.ComponentModel.ISupportInitialize)this.numNc).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)this.numImgSize).BeginInit();
         this.SuspendLayout();
 
-        // tableLayout
+        // ═══════════════════════════════════════════════════════
+        // tableLayout (top config section)
+        // ═══════════════════════════════════════════════════════
         this.tableLayout.ColumnCount = 3;
         this.tableLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90F));
         this.tableLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        this.tableLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32F));
+        this.tableLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36F));
         this.tableLayout.Dock = DockStyle.Top;
-        this.tableLayout.Height = 380;
+        this.tableLayout.Height = 430;
         this.tableLayout.Padding = new Padding(12);
         this.tableLayout.RowCount = 12;
         for (int i = 0; i < 12; i++)
-            this.tableLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+            this.tableLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
 
         int row = 0;
 
@@ -68,7 +72,8 @@ partial class ExportPanel
         this.txtWeights.PlaceholderText = "runs/train/exp/weights/best.pt";
         this.tableLayout.Controls.Add(this.txtWeights, 1, row);
         this.btnBrowseWeights.Text = "...";
-        this.btnBrowseWeights.Size = new Size(28, 26);
+        this.btnBrowseWeights.Ghost = true;
+        this.btnBrowseWeights.Size = new Size(32, 30);
         this.tableLayout.Controls.Add(this.btnBrowseWeights, 2, row);
 
         // Row 1: Version
@@ -78,7 +83,6 @@ partial class ExportPanel
         this.lblVersion.Dock = DockStyle.Fill;
         this.tableLayout.Controls.Add(this.lblVersion, 0, row);
         this.cboVersion.Dock = DockStyle.Fill;
-        this.cboVersion.DropDownStyle = ComboBoxStyle.DropDownList;
         this.tableLayout.Controls.Add(this.cboVersion, 1, row);
         this.tableLayout.SetColumnSpan(this.cboVersion, 2);
 
@@ -89,11 +93,10 @@ partial class ExportPanel
         this.lblVariant.Dock = DockStyle.Fill;
         this.tableLayout.Controls.Add(this.lblVariant, 0, row);
         this.cboVariant.Dock = DockStyle.Fill;
-        this.cboVariant.DropDownStyle = ComboBoxStyle.DropDownList;
         this.tableLayout.Controls.Add(this.cboVariant, 1, row);
         this.tableLayout.SetColumnSpan(this.cboVariant, 2);
 
-        // Row 3: NumClasses
+        // Row 3: Classes
         row = 3;
         this.lblNc.Text = "Classes:";
         this.lblNc.TextAlign = ContentAlignment.MiddleLeft;
@@ -113,7 +116,6 @@ partial class ExportPanel
         this.lblFormat.Dock = DockStyle.Fill;
         this.tableLayout.Controls.Add(this.lblFormat, 0, row);
         this.cboFormat.Dock = DockStyle.Fill;
-        this.cboFormat.DropDownStyle = ComboBoxStyle.DropDownList;
         this.cboFormat.Items.AddRange(new object[] { "ONNX", "TorchScript" });
         this.cboFormat.SelectedIndex = 0;
         this.tableLayout.Controls.Add(this.cboFormat, 1, row);
@@ -129,7 +131,8 @@ partial class ExportPanel
         this.txtOutput.PlaceholderText = "model.onnx";
         this.tableLayout.Controls.Add(this.txtOutput, 1, row);
         this.btnBrowseOutput.Text = "...";
-        this.btnBrowseOutput.Size = new Size(28, 26);
+        this.btnBrowseOutput.Ghost = true;
+        this.btnBrowseOutput.Size = new Size(32, 30);
         this.tableLayout.Controls.Add(this.btnBrowseOutput, 2, row);
 
         // Row 6: ImgSize
@@ -141,92 +144,106 @@ partial class ExportPanel
         this.numImgSize.Dock = DockStyle.Fill;
         this.numImgSize.Minimum = 32;
         this.numImgSize.Maximum = 2048;
-        this.numImgSize.Increment = 32;
         this.numImgSize.Value = 640;
         this.tableLayout.Controls.Add(this.numImgSize, 1, row);
         this.tableLayout.SetColumnSpan(this.numImgSize, 2);
 
-        // Row 7-9: Checkboxes
+        // Row 7: FP16
         row = 7;
-        this.chkHalf.Text = "FP16 Half Precision";
-        this.chkHalf.Dock = DockStyle.Fill;
-        this.tableLayout.Controls.Add(this.chkHalf, 0, row);
-        this.tableLayout.SetColumnSpan(this.chkHalf, 3);
+        this.lblHalf.Text = "FP16:";
+        this.lblHalf.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblHalf.Dock = DockStyle.Fill;
+        this.tableLayout.Controls.Add(this.lblHalf, 0, row);
+        this.chkHalf.Dock = DockStyle.Left;
+        this.chkHalf.Checked = false;
+        this.tableLayout.Controls.Add(this.chkHalf, 1, row);
 
+        // Row 8: Simplify
         row = 8;
-        this.chkSimplify.Text = "Simplify ONNX";
+        this.lblSimplify.Text = "Simplify:";
+        this.lblSimplify.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblSimplify.Dock = DockStyle.Fill;
+        this.tableLayout.Controls.Add(this.lblSimplify, 0, row);
+        this.chkSimplify.Dock = DockStyle.Left;
         this.chkSimplify.Checked = true;
-        this.chkSimplify.Dock = DockStyle.Fill;
-        this.tableLayout.Controls.Add(this.chkSimplify, 0, row);
-        this.tableLayout.SetColumnSpan(this.chkSimplify, 3);
+        this.tableLayout.Controls.Add(this.chkSimplify, 1, row);
 
+        // Row 9: Dynamic
         row = 9;
-        this.chkDynamic.Text = "Dynamic Batch Size";
-        this.chkDynamic.Dock = DockStyle.Fill;
-        this.tableLayout.Controls.Add(this.chkDynamic, 0, row);
-        this.tableLayout.SetColumnSpan(this.chkDynamic, 3);
+        this.lblDynamic.Text = "Dynamic:";
+        this.lblDynamic.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblDynamic.Dock = DockStyle.Fill;
+        this.tableLayout.Controls.Add(this.lblDynamic, 0, row);
+        this.chkDynamic.Dock = DockStyle.Left;
+        this.chkDynamic.Checked = false;
+        this.tableLayout.Controls.Add(this.chkDynamic, 1, row);
 
         // Row 10: Export button
         row = 10;
         this.btnExport.Text = "Export Model";
-        this.btnExport.Size = new Size(140, 34);
-        this.btnExport.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        this.btnExport.BackColor = Color.FromArgb(0, 120, 212);
-        this.btnExport.ForeColor = Color.White;
-        this.btnExport.FlatStyle = FlatStyle.Flat;
-        this.btnExport.FlatAppearance.BorderSize = 0;
-        this.btnExport.Cursor = Cursors.Hand;
+        this.btnExport.Type = AntdUI.TTypeMini.Primary;
+        this.btnExport.Size = new Size(140, 36);
         this.tableLayout.Controls.Add(this.btnExport, 1, row);
 
-        // grpLog
-        this.grpLog.Dock = DockStyle.Fill;
-        this.grpLog.Text = "Export Log";
-        this.grpLog.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        this.grpLog.Padding = new Padding(8);
-        this.grpLog.Controls.Add(this.txtLog);
+        // ═══════════════════════════════════════════════════════
+        // Log section
+        // ═══════════════════════════════════════════════════════
+        this.panelLogHeader.Text = "Export Log";
+        this.panelLogHeader.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        this.panelLogHeader.Dock = DockStyle.Top;
+        this.panelLogHeader.Height = 30;
+        this.panelLogHeader.Padding = new Padding(8, 6, 0, 0);
 
-        // txtLog
+        this.grpLog.Dock = DockStyle.Fill;
+        this.grpLog.Padding = new Padding(4);
+
         this.txtLog.Dock = DockStyle.Fill;
         this.txtLog.Font = new Font("Cascadia Code", 9F);
         this.txtLog.ReadOnly = true;
         this.txtLog.BackColor = Color.FromArgb(30, 30, 30);
         this.txtLog.ForeColor = Color.FromArgb(220, 220, 220);
         this.txtLog.BorderStyle = BorderStyle.None;
+        this.grpLog.Controls.Add(this.txtLog);
 
+        // ═══════════════════════════════════════════════════════
         // ExportPanel
+        // ═══════════════════════════════════════════════════════
         this.Controls.Add(this.grpLog);
+        this.Controls.Add(this.panelLogHeader);
         this.Controls.Add(this.tableLayout);
         this.Name = "ExportPanel";
         this.Size = new Size(1200, 700);
 
-        ((System.ComponentModel.ISupportInitialize)this.numNc).EndInit();
-        ((System.ComponentModel.ISupportInitialize)this.numImgSize).EndInit();
         this.ResumeLayout(false);
     }
 
     #endregion
 
     private TableLayoutPanel tableLayout;
-    private Label lblWeights;
-    private TextBox txtWeights;
-    private Button btnBrowseWeights;
-    private Label lblVersion;
-    private ComboBox cboVersion;
-    private Label lblVariant;
-    private ComboBox cboVariant;
-    private Label lblNc;
-    private NumericUpDown numNc;
-    private Label lblFormat;
-    private ComboBox cboFormat;
-    private Label lblOutput;
-    private TextBox txtOutput;
-    private Button btnBrowseOutput;
-    private Label lblImgSize;
-    private NumericUpDown numImgSize;
-    private CheckBox chkHalf;
-    private CheckBox chkSimplify;
-    private CheckBox chkDynamic;
-    private Button btnExport;
-    private GroupBox grpLog;
+    private AntdUI.Label lblWeights;
+    private AntdUI.Input txtWeights;
+    private AntdUI.Button btnBrowseWeights;
+    private AntdUI.Label lblVersion;
+    private AntdUI.Select cboVersion;
+    private AntdUI.Label lblVariant;
+    private AntdUI.Select cboVariant;
+    private AntdUI.Label lblNc;
+    private AntdUI.InputNumber numNc;
+    private AntdUI.Label lblFormat;
+    private AntdUI.Select cboFormat;
+    private AntdUI.Label lblOutput;
+    private AntdUI.Input txtOutput;
+    private AntdUI.Button btnBrowseOutput;
+    private AntdUI.Label lblImgSize;
+    private AntdUI.InputNumber numImgSize;
+    private AntdUI.Switch chkHalf;
+    private AntdUI.Label lblHalf;
+    private AntdUI.Switch chkSimplify;
+    private AntdUI.Label lblSimplify;
+    private AntdUI.Switch chkDynamic;
+    private AntdUI.Label lblDynamic;
+    private AntdUI.Button btnExport;
+    private AntdUI.Label panelLogHeader;
+    private System.Windows.Forms.Panel grpLog;
     private RichTextBox txtLog;
 }

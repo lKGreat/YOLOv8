@@ -5,9 +5,10 @@ using YOLO.WinForms.Panels;
 namespace YOLO.WinForms;
 
 /// <summary>
-/// Main application form with tabbed interface for Training, Export, and Inference.
+/// Main application window with tabbed interface for Annotation, Training, Export, and Inference.
+/// Uses AntdUI.Window for modern borderless appearance.
 /// </summary>
-public partial class MainForm : Form
+public partial class MainForm : AntdUI.Window
 {
     private AnnotationPanel? annotationPanel;
     private TrainingPanel? trainingPanel;
@@ -27,6 +28,7 @@ public partial class MainForm : Form
         annotationPanel = new AnnotationPanel();
         annotationPanel.Dock = DockStyle.Fill;
         annotationPanel.StatusChanged += (s, msg) => SetStatus(msg);
+        annotationPanel.DatasetReadyForTraining += SwitchToTrainingWithDataset;
         tabAnnotation.Controls.Add(annotationPanel);
 
         // Training Panel
@@ -48,6 +50,22 @@ public partial class MainForm : Form
         tabInference.Controls.Add(inferencePanel);
     }
 
+    /// <summary>
+    /// Switch to training tab and pre-fill the dataset YAML path.
+    /// Called after annotation dataset generation.
+    /// </summary>
+    public void SwitchToTrainingWithDataset(string yamlPath)
+    {
+        if (InvokeRequired)
+        {
+            Invoke(() => SwitchToTrainingWithDataset(yamlPath));
+            return;
+        }
+
+        tabs.SelectedIndex = 1; // Training tab
+        trainingPanel?.SetDatasetPath(yamlPath);
+    }
+
     private void UpdateDeviceStatus()
     {
         bool cuda = torch.cuda.is_available();
@@ -56,7 +74,7 @@ public partial class MainForm : Form
             : "CPU";
 
         var versions = ModelRegistry.GetVersions();
-        SetStatus($"Ready | Registered models: {string.Join(", ", versions)}");
+        SetStatus($"Ready | Models: {string.Join(", ", versions)}");
     }
 
     private void SetStatus(string message)
@@ -73,5 +91,11 @@ public partial class MainForm : Form
     {
         trainingPanel?.StopTraining();
         base.OnFormClosing(e);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        DraggableMouseDown();
+        base.OnMouseDown(e);
     }
 }

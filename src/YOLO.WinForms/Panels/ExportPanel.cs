@@ -14,6 +14,8 @@ public partial class ExportPanel : UserControl
 
     public event EventHandler<string>? StatusChanged;
 
+    private Form? ParentWindow => this.FindForm();
+
     public ExportPanel()
     {
         InitializeComponent();
@@ -34,7 +36,8 @@ public partial class ExportPanel : UserControl
 
     private void UpdateVariants()
     {
-        if (cboVersion.SelectedItem is not string version) return;
+        var version = GetSelectedText(cboVersion);
+        if (string.IsNullOrEmpty(version)) return;
         cboVariant.Items.Clear();
         foreach (var v in ModelRegistry.GetVariants(version))
             cboVariant.Items.Add(v);
@@ -64,18 +67,18 @@ public partial class ExportPanel : UserControl
     {
         if (string.IsNullOrWhiteSpace(txtWeights.Text) || !File.Exists(txtWeights.Text))
         {
-            MessageBox.Show("Please select a valid weights file.", "Validation",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowMessage("Please select a valid weights file.", AntdUI.TType.Warn);
             return;
         }
 
         btnExport.Enabled = false;
+        btnExport.Loading = true;
         txtLog.Clear();
 
         try
         {
-            string version = cboVersion.SelectedItem?.ToString() ?? "v8";
-            string variant = cboVariant.SelectedItem?.ToString() ?? "n";
+            string version = GetSelectedText(cboVersion) ?? "v8";
+            string variant = GetSelectedText(cboVariant) ?? "n";
             int nc = (int)numNc.Value;
 
             AppendLog($"Loading model: YOLO{version}{variant} (nc={nc})...");
@@ -84,7 +87,7 @@ public partial class ExportPanel : UserControl
             using var model = ModelRegistry.Create(version, nc, variant);
             WeightLoader.SmartLoad(model, txtWeights.Text);
 
-            string format = cboFormat.SelectedItem?.ToString()?.ToLower() switch
+            string format = GetSelectedText(cboFormat)?.ToLower() switch
             {
                 "onnx" => "onnx",
                 "torchscript" => "torchscript",
@@ -115,20 +118,24 @@ public partial class ExportPanel : UserControl
             {
                 StatusChanged?.Invoke(this,
                     $"Export complete: {result.FileSizeBytes / 1024.0 / 1024.0:F1} MB");
+                ShowMessage("Export completed successfully!", AntdUI.TType.Success);
             }
             else
             {
                 StatusChanged?.Invoke(this, "Export failed.");
+                ShowMessage("Export failed.", AntdUI.TType.Error);
             }
         }
         catch (Exception ex)
         {
             AppendLog($"Error: {ex.Message}");
             StatusChanged?.Invoke(this, $"Export error: {ex.Message}");
+            ShowMessage($"Export error: {ex.Message}", AntdUI.TType.Error);
         }
         finally
         {
             btnExport.Enabled = true;
+            btnExport.Loading = false;
         }
     }
 
@@ -145,5 +152,26 @@ public partial class ExportPanel : UserControl
         txtLog.SelectionLength = 0;
         txtLog.ScrollToCaret();
         txtLog.ResumeLayout();
+    }
+
+    private static string? GetSelectedText(AntdUI.Select select)
+    {
+        if (select.SelectedIndex < 0 || select.SelectedIndex >= select.Items.Count)
+            return null;
+        return select.Items[select.SelectedIndex]?.ToString();
+    }
+
+    private void ShowMessage(string text, AntdUI.TType type)
+    {
+        var form = ParentWindow;
+        if (form == null) return;
+
+        switch (type)
+        {
+            case AntdUI.TType.Success: AntdUI.Message.success(form, text, Font); break;
+            case AntdUI.TType.Error: AntdUI.Message.error(form, text, Font); break;
+            case AntdUI.TType.Warn: AntdUI.Message.warn(form, text, Font); break;
+            default: AntdUI.Message.info(form, text, Font); break;
+        }
     }
 }

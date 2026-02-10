@@ -7,9 +7,7 @@ partial class ConfigEditorForm
     protected override void Dispose(bool disposing)
     {
         if (disposing && (components != null))
-        {
             components.Dispose();
-        }
         base.Dispose(disposing);
     }
 
@@ -19,9 +17,10 @@ partial class ConfigEditorForm
     {
         this.components = new System.ComponentModel.Container();
         this.txtEditor = new RichTextBox();
-        this.panelBottom = new Panel();
-        this.btnSave = new Button();
-        this.btnCancel = new Button();
+        this.panelBottom = new System.Windows.Forms.Panel();
+        this.btnSave = new AntdUI.Button();
+        this.btnCancel = new AntdUI.Button();
+
         this.panelBottom.SuspendLayout();
         this.SuspendLayout();
 
@@ -46,35 +45,32 @@ partial class ConfigEditorForm
         this.panelBottom.Location = new Point(0, 380);
         this.panelBottom.Name = "panelBottom";
         this.panelBottom.Padding = new Padding(8);
-        this.panelBottom.Size = new Size(600, 50);
+        this.panelBottom.Size = new Size(600, 54);
         this.panelBottom.TabIndex = 1;
 
         // btnSave
         this.btnSave.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        this.btnSave.FlatStyle = FlatStyle.Flat;
-        this.btnSave.Location = new Point(400, 10);
+        this.btnSave.Type = AntdUI.TTypeMini.Primary;
+        this.btnSave.Location = new Point(395, 10);
         this.btnSave.Name = "btnSave";
-        this.btnSave.Size = new Size(85, 30);
+        this.btnSave.Size = new Size(90, 34);
         this.btnSave.TabIndex = 0;
         this.btnSave.Text = "Save";
-        this.btnSave.UseVisualStyleBackColor = true;
         this.btnSave.Click += BtnSave_Click;
 
         // btnCancel
         this.btnCancel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        this.btnCancel.FlatStyle = FlatStyle.Flat;
-        this.btnCancel.Location = new Point(500, 10);
+        this.btnCancel.Location = new Point(495, 10);
         this.btnCancel.Name = "btnCancel";
-        this.btnCancel.Size = new Size(85, 30);
+        this.btnCancel.Size = new Size(90, 34);
         this.btnCancel.TabIndex = 1;
         this.btnCancel.Text = "Cancel";
-        this.btnCancel.UseVisualStyleBackColor = true;
         this.btnCancel.Click += BtnCancel_Click;
 
         // ConfigEditorForm
         this.AutoScaleDimensions = new SizeF(7F, 15F);
         this.AutoScaleMode = AutoScaleMode.Font;
-        this.ClientSize = new Size(600, 430);
+        this.ClientSize = new Size(600, 434);
         this.Controls.Add(this.txtEditor);
         this.Controls.Add(this.panelBottom);
         this.FormBorderStyle = FormBorderStyle.SizableToolWindow;
@@ -82,6 +78,7 @@ partial class ConfigEditorForm
         this.Name = "ConfigEditorForm";
         this.StartPosition = FormStartPosition.CenterParent;
         this.Text = "Edit Dataset Configuration";
+
         this.panelBottom.ResumeLayout(false);
         this.ResumeLayout(false);
     }
@@ -89,7 +86,7 @@ partial class ConfigEditorForm
     #endregion
 
     private RichTextBox txtEditor;
-    private Panel panelBottom;
-    private Button btnSave;
-    private Button btnCancel;
+    private System.Windows.Forms.Panel panelBottom;
+    private AntdUI.Button btnSave;
+    private AntdUI.Button btnCancel;
 }

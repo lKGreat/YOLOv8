@@ -13,6 +13,12 @@ internal static class Program
         YOLOv8Model.EnsureRegistered();
         Trainer.RegisterLossFactories();
 
+        // Initialize AntdUI
+        AntdUI.Localization.DefaultLanguage = "zh-CN";
+        AntdUI.Config.TextRenderingHighQuality = true;
+        AntdUI.Config.Animation = true;
+        AntdUI.Config.ShowInWindow = true;
+
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());
     }

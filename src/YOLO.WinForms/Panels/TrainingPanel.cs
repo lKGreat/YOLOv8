@@ -19,6 +19,9 @@ public partial class TrainingPanel : UserControl
 
     public event EventHandler<string>? StatusChanged;
 
+    /// <summary>Helper to get the parent form for AntdUI messages.</summary>
+    private Form? ParentWindow => this.FindForm();
+
     public TrainingPanel()
     {
         InitializeComponent();
@@ -50,7 +53,8 @@ public partial class TrainingPanel : UserControl
 
     private void UpdateVariants()
     {
-        if (cboVersion.SelectedItem is not string version) return;
+        var version = GetSelectedText(cboVersion);
+        if (string.IsNullOrEmpty(version)) return;
 
         var variants = ModelRegistry.GetVariants(version);
         cboVariant.Items.Clear();
@@ -70,7 +74,7 @@ public partial class TrainingPanel : UserControl
 
         trainingService.LogMessage += (s, msg) => AppendLog(msg);
 
-        // Real-time chart update: feed per-epoch metrics into MetricsChart
+        // Real-time chart update
         trainingService.EpochCompleted += (s, m) =>
         {
             metricsChart?.AddEpoch(
@@ -101,6 +105,19 @@ public partial class TrainingPanel : UserControl
         };
     }
 
+    /// <summary>
+    /// Set the dataset YAML path from external (e.g. annotation panel).
+    /// </summary>
+    public void SetDatasetPath(string yamlPath)
+    {
+        if (InvokeRequired)
+        {
+            Invoke(() => SetDatasetPath(yamlPath));
+            return;
+        }
+        txtDataset.Text = yamlPath;
+    }
+
     private void BtnBrowseDataset_Click(object? sender, EventArgs e)
     {
         using var dlg = new OpenFileDialog
@@ -115,18 +132,15 @@ public partial class TrainingPanel : UserControl
 
     private async void BtnStart_Click(object? sender, EventArgs e)
     {
-        // Validate
         if (string.IsNullOrWhiteSpace(txtDataset.Text))
         {
-            MessageBox.Show("Please select a dataset YAML file.", "Validation",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowMessage("Please select a dataset YAML file.", AntdUI.TType.Warn);
             return;
         }
 
         if (!File.Exists(txtDataset.Text))
         {
-            MessageBox.Show($"Dataset file not found: {txtDataset.Text}", "Validation",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowMessage($"Dataset file not found: {txtDataset.Text}", AntdUI.TType.Warn);
             return;
         }
 
@@ -136,27 +150,26 @@ public partial class TrainingPanel : UserControl
 
         try
         {
-            // Load dataset config
             var dataConfig = DatasetConfig.Load(txtDataset.Text);
             AppendLog($"Dataset: {dataConfig.Nc} classes, Train: {dataConfig.Train}");
 
             var config = new TrainConfig
             {
-                ModelVersion = cboVersion.SelectedItem?.ToString() ?? "v8",
-                ModelVariant = cboVariant.SelectedItem?.ToString() ?? "n",
+                ModelVersion = GetSelectedText(cboVersion) ?? "v8",
+                ModelVariant = GetSelectedText(cboVariant) ?? "n",
                 NumClasses = dataConfig.Nc,
                 Epochs = (int)numEpochs.Value,
                 BatchSize = (int)numBatch.Value,
                 ImgSize = (int)numImgSize.Value,
                 Lr0 = double.Parse(txtLr0.Text),
-                Optimizer = cboOptimizer.SelectedItem?.ToString() ?? "auto",
+                Optimizer = GetSelectedText(cboOptimizer) ?? "auto",
                 CosLR = chkCosLR.Checked,
                 SaveDir = txtSaveDir.Text
             };
 
             // Determine device
             torch.Device? trainDevice = null;
-            var deviceStr = cboDevice.SelectedItem?.ToString();
+            var deviceStr = GetSelectedText(cboDevice);
             if (deviceStr != null && deviceStr.StartsWith("CUDA"))
             {
                 var parts = deviceStr.Split(':');
@@ -186,12 +199,14 @@ public partial class TrainingPanel : UserControl
             {
                 StatusChanged?.Invoke(this,
                     $"Training complete: fitness={result.BestFitness:F4} mAP50={result.BestMap50:F4}");
+                ShowMessage("Training completed successfully!", AntdUI.TType.Success);
             }
         }
         catch (Exception ex)
         {
             AppendLog($"Error: {ex.Message}");
             StatusChanged?.Invoke(this, $"Training failed: {ex.Message}");
+            ShowMessage($"Training failed: {ex.Message}", AntdUI.TType.Error);
         }
         finally
         {
@@ -216,7 +231,17 @@ public partial class TrainingPanel : UserControl
     {
         btnStart.Enabled = !isTraining;
         btnStop.Enabled = isTraining;
-        grpConfig.Enabled = !isTraining;
+        tableConfig.Enabled = !isTraining;
+        btnBrowseDataset.Enabled = !isTraining;
+
+        if (isTraining)
+        {
+            btnStart.Loading = true;
+        }
+        else
+        {
+            btnStart.Loading = false;
+        }
     }
 
     private void AppendLog(string message)
@@ -229,11 +254,42 @@ public partial class TrainingPanel : UserControl
 
         txtLog.SuspendLayout();
         txtLog.AppendText(message + Environment.NewLine);
-        // Force scroll to bottom: move caret to end, then scroll
         txtLog.SelectionStart = txtLog.TextLength;
         txtLog.SelectionLength = 0;
         txtLog.ScrollToCaret();
         txtLog.ResumeLayout();
+    }
+
+    /// <summary>
+    /// Helper to safely get selected text from AntdUI.Select.
+    /// </summary>
+    private static string? GetSelectedText(AntdUI.Select select)
+    {
+        if (select.SelectedIndex < 0 || select.SelectedIndex >= select.Items.Count)
+            return null;
+        return select.Items[select.SelectedIndex]?.ToString();
+    }
+
+    private void ShowMessage(string text, AntdUI.TType type)
+    {
+        var form = ParentWindow;
+        if (form == null) return;
+
+        switch (type)
+        {
+            case AntdUI.TType.Success:
+                AntdUI.Message.success(form, text, Font);
+                break;
+            case AntdUI.TType.Error:
+                AntdUI.Message.error(form, text, Font);
+                break;
+            case AntdUI.TType.Warn:
+                AntdUI.Message.warn(form, text, Font);
+                break;
+            default:
+                AntdUI.Message.info(form, text, Font);
+                break;
+        }
     }
 
     /// <summary>

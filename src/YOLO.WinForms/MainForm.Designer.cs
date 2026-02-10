@@ -7,9 +7,7 @@ partial class MainForm
     protected override void Dispose(bool disposing)
     {
         if (disposing && (components != null))
-        {
             components.Dispose();
-        }
         base.Dispose(disposing);
     }
 
@@ -18,94 +16,77 @@ partial class MainForm
     private void InitializeComponent()
     {
         this.components = new System.ComponentModel.Container();
-        this.tabControl = new TabControl();
-        this.tabAnnotation = new TabPage();
-        this.tabTraining = new TabPage();
-        this.tabExport = new TabPage();
-        this.tabInference = new TabPage();
-        this.statusStrip = new StatusStrip();
-        this.lblStatus = new ToolStripStatusLabel();
-        this.lblDevice = new ToolStripStatusLabel();
+        this.windowBar = new AntdUI.PageHeader();
+        this.tabs = new AntdUI.Tabs();
+        this.tabAnnotation = new AntdUI.TabPage();
+        this.tabTraining = new AntdUI.TabPage();
+        this.tabExport = new AntdUI.TabPage();
+        this.tabInference = new AntdUI.TabPage();
+        this.panelStatus = new System.Windows.Forms.Panel();
+        this.lblStatus = new AntdUI.Label();
+        this.lblDevice = new AntdUI.Label();
 
-        // tabControl
-        this.tabControl.Controls.Add(this.tabAnnotation);
-        this.tabControl.Controls.Add(this.tabTraining);
-        this.tabControl.Controls.Add(this.tabExport);
-        this.tabControl.Controls.Add(this.tabInference);
-        this.tabControl.Dock = DockStyle.Fill;
-        this.tabControl.Font = new Font("Segoe UI", 10F);
-        this.tabControl.Location = new Point(0, 0);
-        this.tabControl.Name = "tabControl";
-        this.tabControl.Padding = new Point(12, 6);
-        this.tabControl.SelectedIndex = 0;
-        this.tabControl.Size = new Size(1280, 750);
-        this.tabControl.TabIndex = 0;
+        this.SuspendLayout();
 
-        // tabAnnotation
-        this.tabAnnotation.Location = new Point(4, 34);
-        this.tabAnnotation.Name = "tabAnnotation";
-        this.tabAnnotation.Padding = new Padding(8);
-        this.tabAnnotation.Size = new Size(1272, 712);
-        this.tabAnnotation.TabIndex = 0;
+        // ── windowBar (title bar) ──────────────────────────────
+        this.windowBar.Dock = DockStyle.Top;
+        this.windowBar.Size = new Size(1280, 40);
+        this.windowBar.ShowIcon = true;
+        this.windowBar.ShowButton = true;
+        this.windowBar.Text = "YOLO Training Tool";
+        this.windowBar.SubText = "C# Native";
+
+        // ── tabs ───────────────────────────────────────────────
+        this.tabs.Dock = DockStyle.Fill;
+        this.tabs.Type = AntdUI.TabType.Card;
+
         this.tabAnnotation.Text = "Annotation";
-        this.tabAnnotation.UseVisualStyleBackColor = true;
+        this.tabAnnotation.Padding = new Padding(4);
 
-        // tabTraining
-        this.tabTraining.Location = new Point(4, 34);
-        this.tabTraining.Name = "tabTraining";
-        this.tabTraining.Padding = new Padding(8);
-        this.tabTraining.Size = new Size(1272, 712);
-        this.tabTraining.TabIndex = 1;
         this.tabTraining.Text = "Training";
-        this.tabTraining.UseVisualStyleBackColor = true;
+        this.tabTraining.Padding = new Padding(4);
 
-        // tabExport
-        this.tabExport.Location = new Point(4, 34);
-        this.tabExport.Name = "tabExport";
-        this.tabExport.Padding = new Padding(8);
-        this.tabExport.Size = new Size(1272, 712);
-        this.tabExport.TabIndex = 2;
         this.tabExport.Text = "Export";
-        this.tabExport.UseVisualStyleBackColor = true;
+        this.tabExport.Padding = new Padding(4);
 
-        // tabInference
-        this.tabInference.Location = new Point(4, 34);
-        this.tabInference.Name = "tabInference";
-        this.tabInference.Padding = new Padding(8);
-        this.tabInference.Size = new Size(1272, 712);
-        this.tabInference.TabIndex = 3;
         this.tabInference.Text = "Inference";
-        this.tabInference.UseVisualStyleBackColor = true;
+        this.tabInference.Padding = new Padding(4);
 
-        // statusStrip
-        this.statusStrip.Items.AddRange(new ToolStripItem[] {
-            this.lblStatus,
-            this.lblDevice
-        });
-        this.statusStrip.Location = new Point(0, 750);
-        this.statusStrip.Name = "statusStrip";
-        this.statusStrip.Size = new Size(1280, 22);
-        this.statusStrip.TabIndex = 1;
+        this.tabs.Pages.Add(this.tabAnnotation);
+        this.tabs.Pages.Add(this.tabTraining);
+        this.tabs.Pages.Add(this.tabExport);
+        this.tabs.Pages.Add(this.tabInference);
 
-        // lblStatus
-        this.lblStatus.Name = "lblStatus";
-        this.lblStatus.Size = new Size(100, 17);
+        // ── panelStatus (bottom status bar) ────────────────────
+        this.panelStatus.Dock = DockStyle.Bottom;
+        this.panelStatus.Height = 30;
+        this.panelStatus.BackColor = Color.FromArgb(245, 245, 245);
+        this.panelStatus.Padding = new Padding(12, 0, 12, 0);
+
+        this.lblStatus.Dock = DockStyle.Fill;
         this.lblStatus.Text = "Ready";
-        this.lblStatus.Spring = true;
         this.lblStatus.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblStatus.Font = new Font("Segoe UI", 9F);
+        this.lblStatus.ForeColor = Color.FromArgb(100, 100, 100);
 
-        // lblDevice
-        this.lblDevice.Name = "lblDevice";
-        this.lblDevice.Size = new Size(150, 17);
+        this.lblDevice.Dock = DockStyle.Right;
+        this.lblDevice.AutoSize = true;
+        this.lblDevice.Text = "CPU";
         this.lblDevice.TextAlign = ContentAlignment.MiddleRight;
+        this.lblDevice.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        this.lblDevice.ForeColor = Color.FromArgb(22, 119, 255);
 
-        // MainForm
+        this.panelStatus.Controls.Add(this.lblStatus);
+        this.panelStatus.Controls.Add(this.lblDevice);
+
+        // ── MainForm ───────────────────────────────────────────
         this.AutoScaleDimensions = new SizeF(7F, 15F);
         this.AutoScaleMode = AutoScaleMode.Font;
-        this.ClientSize = new Size(1280, 772);
-        this.Controls.Add(this.tabControl);
-        this.Controls.Add(this.statusStrip);
-        this.MinimumSize = new Size(960, 600);
+        this.ClientSize = new Size(1360, 800);
+        this.Controls.Add(this.tabs);
+        this.Controls.Add(this.windowBar);
+        this.Controls.Add(this.panelStatus);
+        this.MinimumSize = new Size(1024, 640);
         this.Name = "MainForm";
         this.StartPosition = FormStartPosition.CenterScreen;
         this.Text = "YOLO Training Tool";
@@ -115,12 +96,13 @@ partial class MainForm
 
     #endregion
 
-    private TabControl tabControl;
-    private TabPage tabAnnotation;
-    private TabPage tabTraining;
-    private TabPage tabExport;
-    private TabPage tabInference;
-    private StatusStrip statusStrip;
-    private ToolStripStatusLabel lblStatus;
-    private ToolStripStatusLabel lblDevice;
+    private AntdUI.PageHeader windowBar;
+    private AntdUI.Tabs tabs;
+    private AntdUI.TabPage tabAnnotation;
+    private AntdUI.TabPage tabTraining;
+    private AntdUI.TabPage tabExport;
+    private AntdUI.TabPage tabInference;
+    private System.Windows.Forms.Panel panelStatus;
+    private AntdUI.Label lblStatus;
+    private AntdUI.Label lblDevice;
 }

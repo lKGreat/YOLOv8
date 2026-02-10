@@ -7,9 +7,7 @@ partial class TrainingPanel
     protected override void Dispose(bool disposing)
     {
         if (disposing && (components != null))
-        {
             components.Dispose();
-        }
         base.Dispose(disposing);
     }
 
@@ -20,218 +18,194 @@ partial class TrainingPanel
         this.components = new System.ComponentModel.Container();
 
         this.splitMain = new SplitContainer();
-        this.grpConfig = new GroupBox();
+
+        // Config panel
+        this.panelConfigHeader = new AntdUI.Label();
         this.tableConfig = new TableLayoutPanel();
-        this.lblVersion = new Label();
-        this.cboVersion = new ComboBox();
-        this.lblVariant = new Label();
-        this.cboVariant = new ComboBox();
-        this.lblDataset = new Label();
-        this.txtDataset = new TextBox();
-        this.btnBrowseDataset = new Button();
-        this.lblEpochs = new Label();
-        this.numEpochs = new NumericUpDown();
-        this.lblBatch = new Label();
-        this.numBatch = new NumericUpDown();
-        this.lblImgSize = new Label();
-        this.numImgSize = new NumericUpDown();
-        this.lblLr0 = new Label();
-        this.txtLr0 = new TextBox();
-        this.lblOptimizer = new Label();
-        this.cboOptimizer = new ComboBox();
-        this.lblSaveDir = new Label();
-        this.txtSaveDir = new TextBox();
-        this.chkCosLR = new CheckBox();
+        this.lblVersion = new AntdUI.Label();
+        this.cboVersion = new AntdUI.Select();
+        this.lblVariant = new AntdUI.Label();
+        this.cboVariant = new AntdUI.Select();
+        this.lblDataset = new AntdUI.Label();
+        this.txtDataset = new AntdUI.Input();
+        this.btnBrowseDataset = new AntdUI.Button();
+        this.lblEpochs = new AntdUI.Label();
+        this.numEpochs = new AntdUI.InputNumber();
+        this.lblBatch = new AntdUI.Label();
+        this.numBatch = new AntdUI.InputNumber();
+        this.lblImgSize = new AntdUI.Label();
+        this.numImgSize = new AntdUI.InputNumber();
+        this.lblLr0 = new AntdUI.Label();
+        this.txtLr0 = new AntdUI.Input();
+        this.lblOptimizer = new AntdUI.Label();
+        this.cboOptimizer = new AntdUI.Select();
+        this.lblSaveDir = new AntdUI.Label();
+        this.txtSaveDir = new AntdUI.Input();
+        this.lblDevice = new AntdUI.Label();
+        this.cboDevice = new AntdUI.Select();
+        this.chkCosLR = new AntdUI.Switch();
+        this.lblCosLR = new AntdUI.Label();
         this.panelButtons = new FlowLayoutPanel();
-        this.btnStart = new Button();
-        this.btnStop = new Button();
+        this.btnStart = new AntdUI.Button();
+        this.btnStop = new AntdUI.Button();
+
+        // Right panel
         this.splitRight = new SplitContainer();
-        this.grpChart = new GroupBox();
-        this.grpLog = new GroupBox();
+        this.panelChartHeader = new AntdUI.Label();
+        this.grpChart = new System.Windows.Forms.Panel();
+        this.panelLogHeader = new AntdUI.Label();
+        this.grpLog = new System.Windows.Forms.Panel();
         this.txtLog = new RichTextBox();
 
         ((System.ComponentModel.ISupportInitialize)this.splitMain).BeginInit();
         this.splitMain.SuspendLayout();
         ((System.ComponentModel.ISupportInitialize)this.splitRight).BeginInit();
         this.splitRight.SuspendLayout();
-        ((System.ComponentModel.ISupportInitialize)this.numEpochs).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)this.numBatch).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)this.numImgSize).BeginInit();
         this.SuspendLayout();
 
-        // splitMain
+        // ── splitMain ──────────────────────────────────────────
         this.splitMain.Dock = DockStyle.Fill;
         this.splitMain.FixedPanel = FixedPanel.Panel1;
-        this.splitMain.Location = new Point(0, 0);
-        this.splitMain.Name = "splitMain";
         this.splitMain.Size = new Size(1200, 700);
         this.splitMain.Panel1MinSize = 200;
         this.splitMain.Panel2MinSize = 200;
         this.splitMain.SplitterDistance = 320;
-        this.splitMain.Panel1.Controls.Add(this.grpConfig);
-        this.splitMain.Panel2.Controls.Add(this.splitRight);
 
-        // grpConfig
-        this.grpConfig.Dock = DockStyle.Fill;
-        this.grpConfig.Text = "Training Configuration";
-        this.grpConfig.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        this.grpConfig.Padding = new Padding(8);
-        this.grpConfig.Controls.Add(this.tableConfig);
-        this.grpConfig.Controls.Add(this.panelButtons);
+        // ═══════════════════════════════════════════════════════
+        // LEFT: Config panel
+        // ═══════════════════════════════════════════════════════
+        this.panelConfigHeader.Text = "Training Configuration";
+        this.panelConfigHeader.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        this.panelConfigHeader.Dock = DockStyle.Top;
+        this.panelConfigHeader.Height = 36;
+        this.panelConfigHeader.Padding = new Padding(8, 8, 0, 0);
 
         // tableConfig
         this.tableConfig.Dock = DockStyle.Fill;
         this.tableConfig.ColumnCount = 3;
-        this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 85F));
+        this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32F));
-        this.tableConfig.RowCount = 13;
-        for (int i = 0; i < 13; i++)
-            this.tableConfig.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-        this.tableConfig.Padding = new Padding(0, 4, 0, 0);
+        this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36F));
+        this.tableConfig.RowCount = 12;
+        for (int i = 0; i < 12; i++)
+            this.tableConfig.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        this.tableConfig.Padding = new Padding(6, 4, 6, 0);
 
-        // --- Row 0: Version ---
+        int row = 0;
+
+        // Row 0: Version
         this.lblVersion.Text = "Version:";
         this.lblVersion.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblVersion.Font = new Font("Segoe UI", 9F);
         this.lblVersion.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblVersion, 0, 0);
-
+        this.tableConfig.Controls.Add(this.lblVersion, 0, row);
         this.cboVersion.Dock = DockStyle.Fill;
-        this.cboVersion.DropDownStyle = ComboBoxStyle.DropDownList;
-        this.cboVersion.Font = new Font("Segoe UI", 9F);
-        this.tableConfig.Controls.Add(this.cboVersion, 1, 0);
+        this.tableConfig.Controls.Add(this.cboVersion, 1, row);
         this.tableConfig.SetColumnSpan(this.cboVersion, 2);
 
-        // --- Row 1: Variant ---
+        // Row 1: Variant
+        row = 1;
         this.lblVariant.Text = "Variant:";
         this.lblVariant.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblVariant.Font = new Font("Segoe UI", 9F);
         this.lblVariant.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblVariant, 0, 1);
-
+        this.tableConfig.Controls.Add(this.lblVariant, 0, row);
         this.cboVariant.Dock = DockStyle.Fill;
-        this.cboVariant.DropDownStyle = ComboBoxStyle.DropDownList;
-        this.cboVariant.Font = new Font("Segoe UI", 9F);
-        this.tableConfig.Controls.Add(this.cboVariant, 1, 1);
+        this.tableConfig.Controls.Add(this.cboVariant, 1, row);
         this.tableConfig.SetColumnSpan(this.cboVariant, 2);
 
-        // --- Row 2: Dataset ---
+        // Row 2: Dataset
+        row = 2;
         this.lblDataset.Text = "Dataset:";
         this.lblDataset.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblDataset.Font = new Font("Segoe UI", 9F);
         this.lblDataset.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblDataset, 0, 2);
-
+        this.tableConfig.Controls.Add(this.lblDataset, 0, row);
         this.txtDataset.Dock = DockStyle.Fill;
-        this.txtDataset.Font = new Font("Segoe UI", 9F);
-        this.txtDataset.PlaceholderText = "coco128.yaml";
-        this.tableConfig.Controls.Add(this.txtDataset, 1, 2);
-
+        this.txtDataset.PlaceholderText = "dataset.yaml";
+        this.tableConfig.Controls.Add(this.txtDataset, 1, row);
         this.btnBrowseDataset.Text = "...";
-        this.btnBrowseDataset.Size = new Size(28, 26);
-        this.btnBrowseDataset.Font = new Font("Segoe UI", 9F);
-        this.tableConfig.Controls.Add(this.btnBrowseDataset, 2, 2);
+        this.btnBrowseDataset.Size = new Size(32, 30);
+        this.btnBrowseDataset.Ghost = true;
+        this.tableConfig.Controls.Add(this.btnBrowseDataset, 2, row);
 
-        // --- Row 3: Epochs ---
+        // Row 3: Epochs
+        row = 3;
         this.lblEpochs.Text = "Epochs:";
         this.lblEpochs.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblEpochs.Font = new Font("Segoe UI", 9F);
         this.lblEpochs.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblEpochs, 0, 3);
-
+        this.tableConfig.Controls.Add(this.lblEpochs, 0, row);
         this.numEpochs.Dock = DockStyle.Fill;
-        this.numEpochs.Font = new Font("Segoe UI", 9F);
         this.numEpochs.Minimum = 1;
         this.numEpochs.Maximum = 10000;
         this.numEpochs.Value = 100;
-        this.tableConfig.Controls.Add(this.numEpochs, 1, 3);
+        this.tableConfig.Controls.Add(this.numEpochs, 1, row);
         this.tableConfig.SetColumnSpan(this.numEpochs, 2);
 
-        // --- Row 4: Batch ---
+        // Row 4: Batch
+        row = 4;
         this.lblBatch.Text = "Batch:";
         this.lblBatch.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblBatch.Font = new Font("Segoe UI", 9F);
         this.lblBatch.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblBatch, 0, 4);
-
+        this.tableConfig.Controls.Add(this.lblBatch, 0, row);
         this.numBatch.Dock = DockStyle.Fill;
-        this.numBatch.Font = new Font("Segoe UI", 9F);
         this.numBatch.Minimum = 1;
         this.numBatch.Maximum = 512;
         this.numBatch.Value = 16;
-        this.tableConfig.Controls.Add(this.numBatch, 1, 4);
+        this.tableConfig.Controls.Add(this.numBatch, 1, row);
         this.tableConfig.SetColumnSpan(this.numBatch, 2);
 
-        // --- Row 5: ImgSize ---
+        // Row 5: ImgSize
+        row = 5;
         this.lblImgSize.Text = "ImgSize:";
         this.lblImgSize.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblImgSize.Font = new Font("Segoe UI", 9F);
         this.lblImgSize.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblImgSize, 0, 5);
-
+        this.tableConfig.Controls.Add(this.lblImgSize, 0, row);
         this.numImgSize.Dock = DockStyle.Fill;
-        this.numImgSize.Font = new Font("Segoe UI", 9F);
         this.numImgSize.Minimum = 32;
         this.numImgSize.Maximum = 2048;
-        this.numImgSize.Increment = 32;
         this.numImgSize.Value = 640;
-        this.tableConfig.Controls.Add(this.numImgSize, 1, 5);
+        this.tableConfig.Controls.Add(this.numImgSize, 1, row);
         this.tableConfig.SetColumnSpan(this.numImgSize, 2);
 
-        // --- Row 6: Learning Rate ---
+        // Row 6: LR
+        row = 6;
         this.lblLr0.Text = "LR:";
         this.lblLr0.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblLr0.Font = new Font("Segoe UI", 9F);
         this.lblLr0.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblLr0, 0, 6);
-
+        this.tableConfig.Controls.Add(this.lblLr0, 0, row);
         this.txtLr0.Dock = DockStyle.Fill;
-        this.txtLr0.Font = new Font("Segoe UI", 9F);
         this.txtLr0.Text = "0.01";
-        this.tableConfig.Controls.Add(this.txtLr0, 1, 6);
+        this.tableConfig.Controls.Add(this.txtLr0, 1, row);
         this.tableConfig.SetColumnSpan(this.txtLr0, 2);
 
-        // --- Row 7: Optimizer ---
+        // Row 7: Optimizer
+        row = 7;
         this.lblOptimizer.Text = "Optimizer:";
         this.lblOptimizer.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblOptimizer.Font = new Font("Segoe UI", 9F);
         this.lblOptimizer.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblOptimizer, 0, 7);
-
+        this.tableConfig.Controls.Add(this.lblOptimizer, 0, row);
         this.cboOptimizer.Dock = DockStyle.Fill;
-        this.cboOptimizer.DropDownStyle = ComboBoxStyle.DropDownList;
-        this.cboOptimizer.Font = new Font("Segoe UI", 9F);
         this.cboOptimizer.Items.AddRange(new object[] { "auto", "SGD", "AdamW", "Adam" });
         this.cboOptimizer.SelectedIndex = 0;
-        this.tableConfig.Controls.Add(this.cboOptimizer, 1, 7);
+        this.tableConfig.Controls.Add(this.cboOptimizer, 1, row);
         this.tableConfig.SetColumnSpan(this.cboOptimizer, 2);
 
-        // --- Row 8: Save Dir ---
+        // Row 8: SaveDir
+        row = 8;
         this.lblSaveDir.Text = "Save Dir:";
         this.lblSaveDir.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblSaveDir.Font = new Font("Segoe UI", 9F);
         this.lblSaveDir.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblSaveDir, 0, 8);
-
+        this.tableConfig.Controls.Add(this.lblSaveDir, 0, row);
         this.txtSaveDir.Dock = DockStyle.Fill;
-        this.txtSaveDir.Font = new Font("Segoe UI", 9F);
         this.txtSaveDir.Text = "runs/train/exp";
-        this.tableConfig.Controls.Add(this.txtSaveDir, 1, 8);
+        this.tableConfig.Controls.Add(this.txtSaveDir, 1, row);
         this.tableConfig.SetColumnSpan(this.txtSaveDir, 2);
 
-        // --- Row 9: Device ---
-        this.lblDevice = new Label();
+        // Row 9: Device
+        row = 9;
         this.lblDevice.Text = "Device:";
         this.lblDevice.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblDevice.Font = new Font("Segoe UI", 9F);
         this.lblDevice.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.lblDevice, 0, 9);
-
-        this.cboDevice = new ComboBox();
+        this.tableConfig.Controls.Add(this.lblDevice, 0, row);
         this.cboDevice.Dock = DockStyle.Fill;
-        this.cboDevice.DropDownStyle = ComboBoxStyle.DropDownList;
-        this.cboDevice.Font = new Font("Segoe UI", 9F);
         this.cboDevice.Items.Add("CPU");
         if (TorchSharp.torch.cuda.is_available())
         {
@@ -240,65 +214,75 @@ partial class TrainingPanel
                 this.cboDevice.Items.Add($"CUDA:{g}");
         }
         this.cboDevice.SelectedIndex = this.cboDevice.Items.Count > 1 ? 1 : 0;
-        this.tableConfig.Controls.Add(this.cboDevice, 1, 9);
+        this.tableConfig.Controls.Add(this.cboDevice, 1, row);
         this.tableConfig.SetColumnSpan(this.cboDevice, 2);
 
-        // --- Row 10: Cosine LR ---
-        this.chkCosLR.Text = "Cosine LR Schedule";
-        this.chkCosLR.Font = new Font("Segoe UI", 9F);
-        this.chkCosLR.Dock = DockStyle.Fill;
-        this.tableConfig.Controls.Add(this.chkCosLR, 0, 10);
-        this.tableConfig.SetColumnSpan(this.chkCosLR, 3);
+        // Row 10: Cosine LR
+        row = 10;
+        this.lblCosLR.Text = "Cosine LR:";
+        this.lblCosLR.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblCosLR.Dock = DockStyle.Fill;
+        this.tableConfig.Controls.Add(this.lblCosLR, 0, row);
+        this.chkCosLR.Dock = DockStyle.Left;
+        this.chkCosLR.Checked = false;
+        this.tableConfig.Controls.Add(this.chkCosLR, 1, row);
 
         // panelButtons
         this.panelButtons.Dock = DockStyle.Bottom;
         this.panelButtons.FlowDirection = FlowDirection.LeftToRight;
-        this.panelButtons.Height = 44;
-        this.panelButtons.Padding = new Padding(4);
+        this.panelButtons.Height = 48;
+        this.panelButtons.Padding = new Padding(8, 6, 8, 6);
+
+        this.btnStart.Text = "Start Training";
+        this.btnStart.Type = AntdUI.TTypeMini.Primary;
+        this.btnStart.Size = new Size(130, 36);
+
+        this.btnStop.Text = "Stop";
+        this.btnStop.Type = AntdUI.TTypeMini.Error;
+        this.btnStop.Size = new Size(80, 36);
+        this.btnStop.Enabled = false;
+
         this.panelButtons.Controls.Add(this.btnStart);
         this.panelButtons.Controls.Add(this.btnStop);
 
-        // btnStart
-        this.btnStart.Text = "Start Training";
-        this.btnStart.Size = new Size(130, 34);
-        this.btnStart.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        this.btnStart.BackColor = Color.FromArgb(0, 120, 212);
-        this.btnStart.ForeColor = Color.White;
-        this.btnStart.FlatStyle = FlatStyle.Flat;
-        this.btnStart.FlatAppearance.BorderSize = 0;
-        this.btnStart.Cursor = Cursors.Hand;
+        // Assemble left panel
+        this.splitMain.Panel1.Controls.Add(this.tableConfig);
+        this.splitMain.Panel1.Controls.Add(this.panelButtons);
+        this.splitMain.Panel1.Controls.Add(this.panelConfigHeader);
 
-        // btnStop
-        this.btnStop.Text = "Stop";
-        this.btnStop.Size = new Size(80, 34);
-        this.btnStop.Font = new Font("Segoe UI", 9F);
-        this.btnStop.Enabled = false;
-        this.btnStop.FlatStyle = FlatStyle.Flat;
-
-        // splitRight
+        // ═══════════════════════════════════════════════════════
+        // RIGHT: Charts + Log
+        // ═══════════════════════════════════════════════════════
         this.splitRight.Dock = DockStyle.Fill;
         this.splitRight.Orientation = Orientation.Horizontal;
         this.splitRight.Size = new Size(876, 700);
         this.splitRight.Panel1MinSize = 100;
         this.splitRight.Panel2MinSize = 100;
         this.splitRight.SplitterDistance = 350;
-        this.splitRight.Panel1.Controls.Add(this.grpChart);
-        this.splitRight.Panel2.Controls.Add(this.grpLog);
 
-        // grpChart
+        // Chart panel
+        this.panelChartHeader.Text = "Training Metrics";
+        this.panelChartHeader.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        this.panelChartHeader.Dock = DockStyle.Top;
+        this.panelChartHeader.Height = 30;
+        this.panelChartHeader.Padding = new Padding(8, 6, 0, 0);
+
         this.grpChart.Dock = DockStyle.Fill;
-        this.grpChart.Text = "Training Metrics";
-        this.grpChart.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        this.grpChart.Padding = new Padding(8);
+        this.grpChart.Padding = new Padding(4);
 
-        // grpLog
+        this.splitRight.Panel1.Controls.Add(this.grpChart);
+        this.splitRight.Panel1.Controls.Add(this.panelChartHeader);
+
+        // Log panel
+        this.panelLogHeader.Text = "Training Log";
+        this.panelLogHeader.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        this.panelLogHeader.Dock = DockStyle.Top;
+        this.panelLogHeader.Height = 30;
+        this.panelLogHeader.Padding = new Padding(8, 6, 0, 0);
+
         this.grpLog.Dock = DockStyle.Fill;
-        this.grpLog.Text = "Training Log";
-        this.grpLog.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        this.grpLog.Padding = new Padding(8);
-        this.grpLog.Controls.Add(this.txtLog);
+        this.grpLog.Padding = new Padding(4);
 
-        // txtLog
         this.txtLog.Dock = DockStyle.Fill;
         this.txtLog.Font = new Font("Cascadia Code", 9F);
         this.txtLog.ReadOnly = true;
@@ -306,8 +290,14 @@ partial class TrainingPanel
         this.txtLog.ForeColor = Color.FromArgb(220, 220, 220);
         this.txtLog.BorderStyle = BorderStyle.None;
         this.txtLog.WordWrap = false;
+        this.grpLog.Controls.Add(this.txtLog);
 
-        // TrainingPanel
+        this.splitRight.Panel2.Controls.Add(this.grpLog);
+        this.splitRight.Panel2.Controls.Add(this.panelLogHeader);
+
+        this.splitMain.Panel2.Controls.Add(this.splitRight);
+
+        // ── TrainingPanel ─────────────────────────────────────
         this.Controls.Add(this.splitMain);
         this.Name = "TrainingPanel";
         this.Size = new Size(1200, 700);
@@ -316,44 +306,44 @@ partial class TrainingPanel
         this.splitMain.ResumeLayout(false);
         ((System.ComponentModel.ISupportInitialize)this.splitRight).EndInit();
         this.splitRight.ResumeLayout(false);
-        ((System.ComponentModel.ISupportInitialize)this.numEpochs).EndInit();
-        ((System.ComponentModel.ISupportInitialize)this.numBatch).EndInit();
-        ((System.ComponentModel.ISupportInitialize)this.numImgSize).EndInit();
         this.ResumeLayout(false);
     }
 
     #endregion
 
     private SplitContainer splitMain;
-    private GroupBox grpConfig;
+    private AntdUI.Label panelConfigHeader;
     private TableLayoutPanel tableConfig;
-    private Label lblVersion;
-    private ComboBox cboVersion;
-    private Label lblVariant;
-    private ComboBox cboVariant;
-    private Label lblDataset;
-    private TextBox txtDataset;
-    private Button btnBrowseDataset;
-    private Label lblEpochs;
-    private NumericUpDown numEpochs;
-    private Label lblBatch;
-    private NumericUpDown numBatch;
-    private Label lblImgSize;
-    private NumericUpDown numImgSize;
-    private Label lblLr0;
-    private TextBox txtLr0;
-    private Label lblOptimizer;
-    private ComboBox cboOptimizer;
-    private Label lblSaveDir;
-    private TextBox txtSaveDir;
-    private CheckBox chkCosLR;
-    private Label lblDevice;
-    private ComboBox cboDevice;
+    private AntdUI.Label lblVersion;
+    private AntdUI.Select cboVersion;
+    private AntdUI.Label lblVariant;
+    private AntdUI.Select cboVariant;
+    private AntdUI.Label lblDataset;
+    private AntdUI.Input txtDataset;
+    private AntdUI.Button btnBrowseDataset;
+    private AntdUI.Label lblEpochs;
+    private AntdUI.InputNumber numEpochs;
+    private AntdUI.Label lblBatch;
+    private AntdUI.InputNumber numBatch;
+    private AntdUI.Label lblImgSize;
+    private AntdUI.InputNumber numImgSize;
+    private AntdUI.Label lblLr0;
+    private AntdUI.Input txtLr0;
+    private AntdUI.Label lblOptimizer;
+    private AntdUI.Select cboOptimizer;
+    private AntdUI.Label lblSaveDir;
+    private AntdUI.Input txtSaveDir;
+    private AntdUI.Label lblDevice;
+    private AntdUI.Select cboDevice;
+    private AntdUI.Switch chkCosLR;
+    private AntdUI.Label lblCosLR;
     private FlowLayoutPanel panelButtons;
-    private Button btnStart;
-    private Button btnStop;
+    private AntdUI.Button btnStart;
+    private AntdUI.Button btnStop;
     private SplitContainer splitRight;
-    private GroupBox grpChart;
-    private GroupBox grpLog;
+    private AntdUI.Label panelChartHeader;
+    private System.Windows.Forms.Panel grpChart;
+    private AntdUI.Label panelLogHeader;
+    private System.Windows.Forms.Panel grpLog;
     private RichTextBox txtLog;
 }
