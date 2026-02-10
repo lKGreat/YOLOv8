@@ -953,35 +953,41 @@ internal class InputDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(350, 120);
+        ClientSize = new Size(600, 220);
 
         var lbl = new Label
         {
             Text = prompt,
-            Location = new Point(12, 12),
-            AutoSize = true
+            Location = new Point(24, 24),
+            AutoSize = true,
+            Font = new Font("Segoe UI", 11F, FontStyle.Regular)
         };
 
         txtInput = new TextBox
         {
-            Location = new Point(12, 36),
-            Size = new Size(320, 25)
+            Location = new Point(24, 60),
+            Size = new Size(540, 32),
+            Font = new Font("Segoe UI", 11F)
         };
 
         btnOk = new Button
         {
-            Text = "OK",
+            Text = "确定",
             DialogResult = DialogResult.OK,
-            Location = new Point(166, 75),
-            Size = new Size(80, 30)
+            Location = new Point(370, 140),
+            Size = new Size(100, 42),
+            Font = new Font("Segoe UI", 11F),
+            FlatStyle = FlatStyle.Standard
         };
 
         btnCancel = new Button
         {
-            Text = "Cancel",
+            Text = "取消",
             DialogResult = DialogResult.Cancel,
-            Location = new Point(252, 75),
-            Size = new Size(80, 30)
+            Location = new Point(480, 140),
+            Size = new Size(100, 42),
+            Font = new Font("Segoe UI", 11F),
+            FlatStyle = FlatStyle.Standard
         };
 
         AcceptButton = btnOk;

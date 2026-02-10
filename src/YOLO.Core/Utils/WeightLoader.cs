@@ -341,11 +341,49 @@ public static class WeightLoader
                 return LoadFromCheckpoint(model, path, strict);
 
             case CheckpointFormat.TorchSharp:
-                model.load(path);
-                long paramCount = model.parameters().Sum(p => p.numel());
-                Console.WriteLine($"  Loaded TorchSharp model ({paramCount:N0} parameters)");
-                return new LoadResult((int)model.parameters().Count(), 0, 0,
-                    new List<string>(), new List<string>());
+                try
+                {
+                    model.load(path);
+                    long paramCount = model.parameters().Sum(p => p.numel());
+                    Console.WriteLine($"  Loaded TorchSharp model ({paramCount:N0} parameters)");
+                    return new LoadResult((int)model.parameters().Count(), 0, 0,
+                        new List<string>(), new List<string>());
+                }
+                catch (Exception ex) when (
+                    ex.Message.Contains("Mismatched", StringComparison.OrdinalIgnoreCase) ||
+                    ex.Message.Contains("shape", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Strict load failed due to shape mismatch — retry with strict: false
+                    // to load as many compatible parameters as possible (mismatched ones
+                    // keep their random initialization and will be logged).
+                    Console.WriteLine($"  Strict load failed ({ex.Message}), retrying with strict=false...");
+
+                    var loadedParams = new Dictionary<string, bool>();
+                    model.load(path, strict: false, loadedParameters: loadedParams);
+
+                    int loaded = loadedParams.Count(kv => kv.Value);
+                    int skipped = loadedParams.Count(kv => !kv.Value);
+
+                    var skippedKeys = loadedParams
+                        .Where(kv => !kv.Value)
+                        .Select(kv => kv.Key)
+                        .ToList();
+
+                    if (skippedKeys.Count > 0)
+                    {
+                        Console.WriteLine($"  Warning: {skipped} parameters had shape mismatches and were skipped:");
+                        foreach (var key in skippedKeys.Take(10))
+                            Console.WriteLine($"    - {key}");
+                        if (skippedKeys.Count > 10)
+                            Console.WriteLine($"    ... and {skippedKeys.Count - 10} more");
+                    }
+
+                    long totalParams = model.parameters().Sum(p => p.numel());
+                    Console.WriteLine($"  Loaded TorchSharp model with fallback ({totalParams:N0} parameters, {loaded} loaded, {skipped} skipped)");
+
+                    return new LoadResult(loaded, skipped, 0,
+                        new List<string>(), skippedKeys);
+                }
 
             default:
                 throw new InvalidOperationException(
