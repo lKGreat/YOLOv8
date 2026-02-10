@@ -10,6 +10,7 @@ using YOLO.Runtime;
 using YOLO.Runtime.Results;
 using YOLO.Training;
 using YOLO.Training.Config;
+using YOLO.App.Parity;
 using static TorchSharp.torch;
 
 namespace YOLO.App;
@@ -59,6 +60,8 @@ public static class Program
                 "val" or "validate" => RunValidate(options),
                 "export" => RunExport(options),
                 "generate-data" => RunGenerateData(options),
+                "parity-freeze" => RunParityFreeze(options),
+                "parity-report" => RunParityReport(options),
                 "runtime-infer" => RunRuntimeInfer(options),
                 "--help" or "-h" or "help" => PrintUsage(),
                 _ => PrintUnknownCommand(command)
@@ -481,6 +484,40 @@ public static class Program
     }
 
     /// <summary>
+    /// Freeze Python baseline into parity/baseline.lock.json.
+    /// </summary>
+    private static int RunParityFreeze(Dictionary<string, string> options)
+    {
+        string root = options.GetValueOrDefault("root", FindWorkspaceRoot()) ?? FindWorkspaceRoot();
+        string outDir = options.GetValueOrDefault("output", Path.Combine(root, "csharp", "parity"))!;
+        var lockPath = ParityBaselineService.Freeze(root, outDir);
+        Console.WriteLine($"Baseline lock generated: {lockPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Verify current workspace against baseline lock.
+    /// </summary>
+    private static int RunParityReport(Dictionary<string, string> options)
+    {
+        string root = options.GetValueOrDefault("root", FindWorkspaceRoot()) ?? FindWorkspaceRoot();
+        string lockPath = options.GetValueOrDefault(
+            "lock",
+            Path.Combine(root, "csharp", "parity", "baseline.lock.json"))!;
+
+        var report = ParityBaselineService.Verify(root, lockPath);
+        Console.WriteLine($"Baseline: {report.BaselineTag}");
+        Console.WriteLine($"Lock file: {report.BaselineLockPath}");
+        Console.WriteLine($"All key files matched: {report.AllKeyFilesMatched}");
+        Console.WriteLine();
+        foreach (var item in report.KeyFileChecks)
+        {
+            Console.WriteLine($"{(item.IsMatch ? "OK " : "DIFF")} {item.RelativePath}");
+        }
+        return report.AllKeyFilesMatched ? 0 : 2;
+    }
+
+    /// <summary>
     /// Export model (placeholder for ONNX/TorchScript export).
     /// </summary>
     private static int RunExport(Dictionary<string, string> options)
@@ -778,6 +815,8 @@ public static class Program
         Console.WriteLine("  bench          Benchmark multiple model variants (n/s/m/l/x)");
         Console.WriteLine("  predict        Run inference on images (TorchSharp)");
         Console.WriteLine("  runtime-infer  Run inference via YOLO.Runtime (.onnx/.pt, PDF, batch, draw)");
+        Console.WriteLine("  parity-freeze  Freeze Python baseline lock file");
+        Console.WriteLine("  parity-report  Verify current source against baseline lock");
         Console.WriteLine("  val            Validate a model on a dataset");
         Console.WriteLine("  export         Export model to ONNX/TorchScript");
         Console.WriteLine();
@@ -864,6 +903,8 @@ public static class Program
         Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source image.jpg --draw --save_dir results/");
         Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source document.pdf");
         Console.WriteLine("  dotnet run -- runtime-infer --model yolov8n.onnx --source document.pdf --save_pdf annotated.pdf");
+        Console.WriteLine("  dotnet run -- parity-freeze --root D:\\Code\\YOLOv8");
+        Console.WriteLine("  dotnet run -- parity-report --lock D:\\Code\\YOLOv8\\csharp\\parity\\baseline.lock.json");
 
         return 0;
     }
@@ -873,5 +914,23 @@ public static class Program
         Console.Error.WriteLine($"Unknown command: {command}");
         Console.Error.WriteLine("Use --help for usage information.");
         return 1;
+    }
+
+    private static string FindWorkspaceRoot()
+    {
+        // Start from current process directory and walk up until we find ultralytics/ + csharp/.
+        var dir = Directory.GetCurrentDirectory();
+        for (int i = 0; i < 8; i++)
+        {
+            var hasU = Directory.Exists(Path.Combine(dir, "ultralytics"));
+            var hasC = Directory.Exists(Path.Combine(dir, "csharp"));
+            if (hasU && hasC)
+                return dir;
+            var parent = Directory.GetParent(dir);
+            if (parent is null)
+                break;
+            dir = parent.FullName;
+        }
+        return Directory.GetCurrentDirectory();
     }
 }

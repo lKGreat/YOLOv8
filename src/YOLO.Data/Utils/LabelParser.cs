@@ -36,6 +36,12 @@ public static class LabelParser
             if (!float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float w)) continue;
             if (!float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out float h)) continue;
 
+            // Validity checks: reject degenerate / invalid boxes
+            if (classId < 0) continue;          // negative class ID
+            if (w <= 0 || h <= 0) continue;     // zero-area or negative size
+            if (cx < 0 || cx > 1 || cy < 0 || cy > 1) continue;  // center outside [0,1]
+            if (w > 1 || h > 1) continue;       // box larger than image
+
             var instance = new BboxInstance
             {
                 ClassId = classId,

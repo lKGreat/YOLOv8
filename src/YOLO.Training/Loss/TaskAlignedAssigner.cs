@@ -6,6 +6,8 @@ namespace YOLO.Training.Loss;
 
 /// <summary>
 /// Task-Aligned Assigner for anchor-free object detection.
+/// Matches Python ultralytics TaskAlignedAssigner (ultralytics/utils/tal.py).
+///
 /// Assigns ground truth boxes to anchor points based on alignment metric:
 ///   metric = pred_score^alpha * IoU^beta
 ///
@@ -16,24 +18,19 @@ public class TaskAlignedAssigner
     private readonly int topK;
     private readonly double alpha;
     private readonly double beta;
+    private readonly double eps;
 
-    public TaskAlignedAssigner(int topK = 10, double alpha = 0.5, double beta = 6.0)
+    public TaskAlignedAssigner(int topK = 10, double alpha = 0.5, double beta = 6.0, double eps = 1e-9)
     {
         this.topK = topK;
         this.alpha = alpha;
         this.beta = beta;
+        this.eps = eps;
     }
 
     /// <summary>
-    /// Perform label assignment.
+    /// Perform label assignment (matches Python forward()).
     /// </summary>
-    /// <param name="predScores">Predicted class scores after sigmoid (B, N, nc)</param>
-    /// <param name="predBboxes">Predicted bboxes in xyxy (B, N, 4)</param>
-    /// <param name="anchorPoints">Anchor point centers (N, 2)</param>
-    /// <param name="gtLabels">Ground truth class labels (B, maxGT, 1)</param>
-    /// <param name="gtBboxes">Ground truth bboxes xyxy (B, maxGT, 4)</param>
-    /// <param name="maskGT">Valid GT mask (B, maxGT, 1)</param>
-    /// <returns>Tuple of (targetLabels, targetBboxes, targetScores, fgMask, targetGTIdx)</returns>
     public (Tensor targetLabels, Tensor targetBboxes, Tensor targetScores,
             Tensor fgMask, Tensor targetGTIdx)
         Assign(Tensor predScores, Tensor predBboxes, Tensor anchorPoints,
@@ -48,7 +45,6 @@ public class TaskAlignedAssigner
 
         if (maxGT == 0)
         {
-            // No ground truth - everything is background
             return (
                 torch.zeros(batch, nAnchors, dtype: ScalarType.Int64, device: device),
                 torch.zeros(batch, nAnchors, 4, dtype: dtype, device: device),
@@ -58,12 +54,68 @@ public class TaskAlignedAssigner
             );
         }
 
-        // Step 1: Determine which anchors are inside GT boxes
-        // anchorPoints: (N, 2), gtBboxes: (B, maxGT, 4)
+        // === get_pos_mask ===
+        var (maskPos, alignMetric, overlaps) = GetPosMask(
+            predScores, predBboxes, anchorPoints, gtLabels, gtBboxes, maskGT,
+            batch, nAnchors, maxGT, nc);
+
+        // === select_highest_overlaps: resolve multi-GT conflicts ===
+        var (targetGTIdx, fgMask, maskPosResolved) = SelectHighestOverlaps(maskPos, overlaps, maxGT);
+
+        // === get_targets ===
+        var gtLabelsLong = gtLabels.squeeze(-1).to(ScalarType.Int64); // (B, maxGT)
+        var (targetLabels, targetBboxes, targetScoresOneHot) = GetTargets(
+            gtLabelsLong, gtBboxes, targetGTIdx, fgMask, batch, nAnchors, maxGT, nc);
+
+        // === Normalize alignment metric and apply to target scores ===
+        alignMetric = alignMetric * maskPosResolved;
+        var posAlignMetrics = alignMetric.amax(new long[] { -1 }, keepdim: true); // (B, maxGT, 1)
+        var posOverlaps = (overlaps * maskPosResolved).amax(new long[] { -1 }, keepdim: true); // (B, maxGT, 1)
+        var normAlignMetric = (alignMetric * posOverlaps / (posAlignMetrics + eps))
+            .amax(new long[] { -2 })   // (B, N) - max across GTs
+            .unsqueeze(-1);             // (B, N, 1)
+        var targetScores = targetScoresOneHot.to(dtype) * normAlignMetric;
+
+        return (targetLabels, targetBboxes, targetScores, fgMask.to(ScalarType.Bool), targetGTIdx);
+    }
+
+    /// <summary>
+    /// Matches Python get_pos_mask: compute in-GT mask, alignment metric, overlaps, top-k mask.
+    /// </summary>
+    private (Tensor maskPos, Tensor alignMetric, Tensor overlaps) GetPosMask(
+        Tensor predScores, Tensor predBboxes, Tensor anchorPoints,
+        Tensor gtLabels, Tensor gtBboxes, Tensor maskGT,
+        long batch, long nAnchors, long maxGT, int nc)
+    {
+        // Step 1: which anchors fall inside GT boxes
         var maskInGTs = SelectCandidatesInGTs(anchorPoints, gtBboxes); // (B, maxGT, N)
 
-        // Step 2: Compute alignment metric for all anchor-GT pairs
-        // Get predicted scores for each GT's class
+        // Step 2: compute alignment metric and IoU overlaps
+        var (alignMetric, overlaps) = GetBoxMetrics(
+            predScores, predBboxes, gtLabels, gtBboxes, maskInGTs * maskGT,
+            batch, nAnchors, maxGT, nc);
+
+        // Step 3: top-k selection with valid-GT masking
+        // topk_mask matches Python: mask_gt.expand(-1, -1, self.topk).bool()
+        var topkMask = maskGT.expand(-1, -1, topK).to(ScalarType.Bool); // (B, maxGT, topK)
+        var maskTopK = SelectTopKCandidates(alignMetric, topkMask); // (B, maxGT, N)
+
+        // Merge masks
+        var maskPos = maskTopK * maskInGTs * maskGT; // (B, maxGT, N)
+
+        return (maskPos, alignMetric, overlaps);
+    }
+
+    /// <summary>
+    /// Compute alignment metric and IoU overlaps.
+    /// Matches Python get_box_metrics.
+    /// </summary>
+    private (Tensor alignMetric, Tensor overlaps) GetBoxMetrics(
+        Tensor predScores, Tensor predBboxes, Tensor gtLabels, Tensor gtBboxes,
+        Tensor maskGTExpanded, long batch, long nAnchors, long maxGT, int nc)
+    {
+        var device = predScores.device;
+        var dtype = predScores.dtype;
         var gtLabelsLong = gtLabels.squeeze(-1).to(ScalarType.Int64); // (B, maxGT)
 
         // Compute IoU between predictions and GTs: (B, maxGT, N)
@@ -75,66 +127,93 @@ public class TaskAlignedAssigner
         // Alignment metric = score^alpha * iou^beta
         var alignMetric = bboxScores.pow(alpha) * overlaps.pow(beta); // (B, maxGT, N)
 
-        // Apply masks: only consider anchors inside GTs and valid GTs
-        alignMetric = alignMetric * maskInGTs * maskGT; // (B, maxGT, N)
+        // Apply mask (only anchors inside valid GTs)
+        alignMetric = alignMetric * maskGTExpanded;
 
-        // Step 3: Select top-k candidates per GT
-        var maskTopK = SelectTopKCandidates(alignMetric, topK); // (B, maxGT, N)
+        return (alignMetric, overlaps);
+    }
 
-        // Final positive mask
-        var maskPos = maskTopK * maskInGTs * maskGT; // (B, maxGT, N)
+    /// <summary>
+    /// Resolve conflicts when one anchor is assigned to multiple GTs.
+    /// Picks the GT with highest IoU for each conflicted anchor.
+    /// Matches Python select_highest_overlaps.
+    /// </summary>
+    private (Tensor targetGTIdx, Tensor fgMask, Tensor maskPos) SelectHighestOverlaps(
+        Tensor maskPos, Tensor overlaps, long maxGT)
+    {
+        // fg_mask = mask_pos.sum(-2) → sum over GT dim → (B, N)
+        var fgMask = maskPos.sum(1); // sum over dim=1 (maxGT) → (B, N)
 
-        // Step 4: Resolve conflicts - if one anchor assigned to multiple GTs, pick highest IoU
-        var fgMask = maskPos.sum(1).to(ScalarType.Bool); // (B, N)
-
-        // For each anchor, find which GT has highest IoU (if assigned to multiple)
-        var targetGTIdx = maskPos.to(ScalarType.Float32).argmax(1); // (B, N)
-
-        // Gather target bboxes and labels
-        var targetLabels = GatherFromDim1(gtLabelsLong, targetGTIdx); // (B, N)
-        var targetBboxes2 = GatherBboxes(gtBboxes, targetGTIdx); // (B, N, 4)
-
-        // Zero out background
-        targetLabels = targetLabels * fgMask.to(ScalarType.Int64);
-
-        // Compute target scores (soft labels based on normalized alignment metric)
-        var targetScores = torch.zeros(batch, nAnchors, nc, dtype: dtype, device: device);
-
-        // Normalize alignment metric matching Python tal.py:119-128
-        // pos_align_metrics: max alignment metric per GT across its assigned anchors
-        var posAlignMetrics = (alignMetric * maskPos).amax(new long[] { -1 }, keepdim: true).clamp_min(1e-8); // (B, maxGT, 1)
-        // pos_overlaps: max IoU per GT across its assigned anchors
-        var posOverlaps = (overlaps * maskPos).amax(new long[] { -1 }, keepdim: true); // (B, maxGT, 1)
-        // norm = align_metric * pos_overlaps / pos_align_metrics, then take max across GTs
-        var normAlignMetric = (alignMetric * posOverlaps / posAlignMetrics * maskPos).amax(1); // (B, N)
-
-        // Scatter normalized metric to target class channels
-        var fgIdx = fgMask.nonzero(); // (numFG, 2) - [batch_idx, anchor_idx]
-        if (fgIdx.shape[0] > 0)
+        if (fgMask.max().item<float>() > 1)
         {
-            for (long i = 0; i < fgIdx.shape[0]; i++)
-            {
-                var bi = fgIdx[i, 0].item<long>();
-                var ai = fgIdx[i, 1].item<long>();
-                var cls = targetLabels[bi, ai].item<long>();
-                var score = normAlignMetric[bi, ai];
-                targetScores[bi, ai, cls] = score;
-            }
+            // Some anchors assigned to multiple GTs
+            var maskMultiGTs = (fgMask.unsqueeze(1) > 1)
+                .expand(-1, maxGT, -1); // (B, maxGT, N)
+
+            // For each anchor, find which GT has highest IoU
+            var maxOverlapsIdx = overlaps.argmax(1); // (B, N) - GT index with max IoU
+
+            // Create one-hot: (B, maxGT, N)
+            var isMaxOverlaps = torch.zeros_like(maskPos);
+            var onesForScatter = torch.ones_like(maxOverlapsIdx.unsqueeze(1)).to(maskPos.dtype);
+            isMaxOverlaps.scatter_(1, maxOverlapsIdx.unsqueeze(1), onesForScatter);
+
+            // For multi-assigned anchors, keep only the highest-IoU GT
+            maskPos = torch.where(maskMultiGTs, isMaxOverlaps, maskPos).to(ScalarType.Float32);
+            fgMask = maskPos.sum(1); // recompute (B, N)
         }
 
-        return (targetLabels, targetBboxes2, targetScores, fgMask, targetGTIdx);
+        // For each anchor, which GT is it assigned to
+        var targetGTIdx = maskPos.argmax(1); // argmax over dim=1 (maxGT) → (B, N)
+
+        return (targetGTIdx, fgMask, maskPos);
+    }
+
+    /// <summary>
+    /// Compute target labels, bboxes, and one-hot scores.
+    /// Matches Python get_targets.
+    /// </summary>
+    private (Tensor targetLabels, Tensor targetBboxes, Tensor targetScores) GetTargets(
+        Tensor gtLabelsLong, Tensor gtBboxes, Tensor targetGTIdx, Tensor fgMask,
+        long batch, long nAnchors, long maxGT, int nc)
+    {
+        var device = gtLabelsLong.device;
+
+        // Python: target_gt_idx = target_gt_idx + batch_ind * n_max_boxes
+        var batchInd = torch.arange(batch, dtype: ScalarType.Int64, device: device)
+            .unsqueeze(-1); // (B, 1)
+        var flatIdx = targetGTIdx + batchInd * maxGT; // (B, N)
+
+        // target_labels = gt_labels.flatten()[flat_idx]
+        var targetLabels = gtLabelsLong.reshape(-1)[flatIdx]; // (B, N)
+
+        // target_bboxes = gt_bboxes.view(-1, 4)[flat_idx]
+        var targetBboxes = gtBboxes.view(-1, 4)[flatIdx]; // (B, N, 4)
+
+        // Clamp labels (safety)
+        targetLabels = targetLabels.clamp_min(0);
+
+        // One-hot target scores: scatter 1 at the class index
+        var targetScores = torch.zeros(batch, nAnchors, nc,
+            dtype: ScalarType.Int64, device: device);
+        var onesForOneHot = torch.ones_like(targetLabels.unsqueeze(-1)); // Int64 matching targetScores
+        targetScores.scatter_(2, targetLabels.unsqueeze(-1), onesForOneHot);
+
+        // Zero out background anchors
+        var fgScoresMask = fgMask.unsqueeze(-1).expand(-1, -1, nc) > 0; // (B, N, nc)
+        targetScores = torch.where(fgScoresMask, targetScores,
+            torch.zeros_like(targetScores));
+
+        return (targetLabels, targetBboxes, targetScores);
     }
 
     /// <summary>
     /// Check which anchor points fall inside GT bounding boxes.
+    /// Uses epsilon threshold matching Python (eps=1e-9).
     /// </summary>
     private Tensor SelectCandidatesInGTs(Tensor anchorPoints, Tensor gtBboxes)
     {
         // anchorPoints: (N, 2), gtBboxes: (B, maxGT, 4) in xyxy
-        long nAnchors = anchorPoints.shape[0];
-        long batch = gtBboxes.shape[0];
-        long maxGT = gtBboxes.shape[1];
-
         var points = anchorPoints.unsqueeze(0).unsqueeze(1); // (1, 1, N, 2)
         var boxes = gtBboxes.unsqueeze(2); // (B, maxGT, 1, 4)
 
@@ -142,9 +221,8 @@ public class TaskAlignedAssigner
         var rb = boxes[.., .., .., 2..] - points; // (B, maxGT, N, 2)
 
         var deltas = torch.cat([lt, rb], dim: -1); // (B, maxGT, N, 4)
-        var inside = deltas.amin(-1) > 0; // (B, maxGT, N) - all 4 deltas > 0
-
-        return inside.to(ScalarType.Float32);
+        // Python uses > eps (1e-9) instead of > 0
+        return deltas.amin(-1).gt(eps).to(ScalarType.Float32); // (B, maxGT, N)
     }
 
     /// <summary>
@@ -153,10 +231,6 @@ public class TaskAlignedAssigner
     private Tensor ComputeIoU(Tensor predBboxes, Tensor gtBboxes)
     {
         // predBboxes: (B, N, 4), gtBboxes: (B, maxGT, 4) both in xyxy
-        long batch = predBboxes.shape[0];
-        long nAnchors = predBboxes.shape[1];
-        long maxGT = gtBboxes.shape[1];
-
         var pred = predBboxes.unsqueeze(1); // (B, 1, N, 4)
         var gt = gtBboxes.unsqueeze(2);     // (B, maxGT, 1, 4)
 
@@ -185,13 +259,6 @@ public class TaskAlignedAssigner
         long nAnchors = predScores.shape[1];
         long maxGT = gtLabels.shape[1];
 
-        // Expand gt labels to index into pred scores
-        var idx = gtLabels.unsqueeze(2).expand(batch, maxGT, nAnchors); // (B, maxGT, N)
-
-        // Permute predScores to (B, nc, N) then gather along nc dim
-        var scores = predScores.permute(0, 2, 1); // (B, nc, N)
-
-        // For each GT, gather the score of its class across all anchors
         var result = torch.zeros(batch, maxGT, nAnchors,
             dtype: predScores.dtype, device: predScores.device);
 
@@ -209,38 +276,45 @@ public class TaskAlignedAssigner
     }
 
     /// <summary>
-    /// Select top-k candidates per GT based on alignment metric.
+    /// Select top-k candidates per GT with duplicate suppression.
+    /// Matches Python select_topk_candidates exactly:
+    ///   1. Get topk indices
+    ///   2. Apply topk_mask (invalid GTs get indices zeroed)
+    ///   3. Use scatter_add to count per-anchor assignments
+    ///   4. Zero counts > 1 (duplicate suppression from masked-to-0 indices)
     /// </summary>
-    private Tensor SelectTopKCandidates(Tensor alignMetric, int topK)
+    private Tensor SelectTopKCandidates(Tensor alignMetric, Tensor? topkMask)
     {
         // alignMetric: (B, maxGT, N)
-        var (topkValues, topkIndices) = alignMetric.topk(
-            Math.Min(topK, (int)alignMetric.shape[2]), dim: -1);
+        int k = Math.Min(topK, (int)alignMetric.shape[2]);
 
-        // Create mask of top-k positions
-        var mask = torch.zeros_like(alignMetric);
-        var ones = torch.ones_like(topkValues); // same dtype/device as mask
-        mask.scatter_(-1, topkIndices, ones);
+        var (topkMetrics, topkIdxs) = alignMetric.topk(k, dim: -1); // each (B, maxGT, k)
 
-        return mask;
-    }
+        // If no external mask, create one: valid if any topk metric > eps
+        if (topkMask is null)
+        {
+            topkMask = (topkMetrics.max(-1, keepdim: true).values > eps)
+                .expand_as(topkIdxs); // (B, maxGT, k)
+        }
 
-    /// <summary>
-    /// Gather values from dim=1 using indices.
-    /// </summary>
-    private Tensor GatherFromDim1(Tensor src, Tensor idx)
-    {
-        // src: (B, maxGT), idx: (B, N)
-        return src.gather(1, idx.clamp(0, src.shape[1] - 1));
-    }
+        // Zero out indices for invalid GTs (they all point to anchor 0)
+        topkIdxs = topkIdxs.masked_fill(~topkMask, 0);
 
-    /// <summary>
-    /// Gather bboxes from dim=1 using indices.
-    /// </summary>
-    private Tensor GatherBboxes(Tensor src, Tensor idx)
-    {
-        // src: (B, maxGT, 4), idx: (B, N)
-        var expanded = idx.unsqueeze(-1).expand(-1, -1, 4);
-        return src.gather(1, expanded.clamp(0, src.shape[1] - 1));
+        // Count how many times each anchor is selected (per GT)
+        var countTensor = torch.zeros(alignMetric.shape,
+            dtype: ScalarType.Int32, device: topkIdxs.device); // (B, maxGT, N)
+        var ones = torch.ones(topkIdxs.shape[0], topkIdxs.shape[1], 1,
+            dtype: ScalarType.Int32, device: topkIdxs.device); // (B, maxGT, 1)
+
+        for (int ki = 0; ki < k; ki++)
+        {
+            var sliceIdx = topkIdxs.slice(-1, ki, ki + 1, 1).to(ScalarType.Int64); // (B, maxGT, 1)
+            countTensor.scatter_add_(-1, sliceIdx, ones);
+        }
+
+        // Suppress duplicates: count > 1 means anchor 0 got hits from masked-out GTs
+        countTensor = countTensor.masked_fill(countTensor > 1, 0);
+
+        return countTensor.to(alignMetric.dtype); // (B, maxGT, N)
     }
 }

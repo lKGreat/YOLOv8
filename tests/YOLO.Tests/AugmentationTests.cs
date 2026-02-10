@@ -156,7 +156,8 @@ public class AugmentationTests
         Assert.Equal(expected, LabelParser.ImageToLabelPath(imgPath));
 
         string imgPath2 = "data/images/val/test.png";
-        string expected2 = "data/labels/val/test.txt";
-        Assert.Equal(expected2, LabelParser.ImageToLabelPath(imgPath2));
+        // On Windows the separator is \ ; normalise to / for comparison
+        string result2 = LabelParser.ImageToLabelPath(imgPath2).Replace('\\', '/');
+        Assert.Equal("data/labels/val/test.txt", result2);
     }
 }

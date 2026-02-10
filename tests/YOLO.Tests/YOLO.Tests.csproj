@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\YOLO.Training\YOLO.Training.csproj" />
     <ProjectReference Include="..\..\src\YOLO.Data\YOLO.Data.csproj" />
     <ProjectReference Include="..\..\src\YOLO.Inference\YOLO.Inference.csproj" />
+    <ProjectReference Include="..\..\src\YOLO.App\YOLO.App.csproj" />
   </ItemGroup>
 
   <ItemGroup>

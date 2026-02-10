@@ -7,6 +7,7 @@ using YOLO.Data.Augmentation;
 using YOLO.Data.Datasets;
 using YOLO.Inference;
 using YOLO.Inference.Metrics;
+using YOLO.Inference.PostProcess;
 using YOLO.Training.Loss;
 using YOLO.Training.Optimizers;
 using YOLO.Training.Schedulers;
@@ -187,16 +188,39 @@ public class Trainer
         logger.SaveArgs(config.ModelVariant, totalParams, config);
 
         // Create augmentation pipelines
+        // First, discover how many images we have to decide on augmentation intensity
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp" };
+        int imageCount = Directory.GetFiles(trainDataDir, "*.*", SearchOption.AllDirectories)
+            .Count(f => extensions.Contains(Path.GetExtension(f)));
+
+        // Tiny-dataset profile: if ≤ 10 images, disable heavy augmentation to stabilize learning
+        const int tinyDatasetThreshold = 10;
+        bool isTinyDataset = imageCount <= tinyDatasetThreshold;
+        float effectiveMosaicProb = isTinyDataset ? 0.0f : config.MosaicProb;
+        float effectiveMixUpProb = isTinyDataset ? 0.0f : config.MixUpProb;
+        float effectiveScale = isTinyDataset ? 0.0f : config.Scale;          // no random scale
+        float effectiveTranslate = isTinyDataset ? 0.0f : config.Translate;  // no random translate
+        float effectiveHsvH = isTinyDataset ? 0.0f : config.HsvH;
+        float effectiveHsvS = isTinyDataset ? 0.0f : config.HsvS;
+        float effectiveHsvV = isTinyDataset ? 0.0f : config.HsvV;
+
+        if (isTinyDataset)
+        {
+            Console.WriteLine($"  [TINY DATASET: {imageCount} images] Disabling mosaic, mixup, perspective, and HSV augmentation for stable learning.");
+        }
+
         var trainPipeline = AugmentationPipeline.CreateTrainPipeline(
-            config.ImgSize, config.MosaicProb, config.MixUpProb,
-            config.HsvH, config.HsvS, config.HsvV,
-            config.FlipLR, config.FlipUD, config.Scale, config.Translate);
+            config.ImgSize, effectiveMosaicProb, effectiveMixUpProb,
+            effectiveHsvH, effectiveHsvS, effectiveHsvV,
+            config.FlipLR, config.FlipUD, effectiveScale, effectiveTranslate);
 
         var noMosaicPipeline = trainPipeline.WithoutMosaic();
 
         // Create dataset
-        var trainDataset = new YOLODataset(trainDataDir, config.ImgSize, trainPipeline, useMosaic: true);
-        trainDataset.CacheLabels();
+        bool useMosaic = !isTinyDataset && config.MosaicProb > 0;
+        var trainDataset = new YOLODataset(trainDataDir, config.ImgSize, trainPipeline, useMosaic: useMosaic);
+        trainDataset.CacheLabels(config.NumClasses);
         Console.WriteLine($"Training samples: {trainDataset.Count}");
 
         // Create validation dataset if provided
@@ -205,7 +229,7 @@ public class Trainer
         {
             var valPipeline = AugmentationPipeline.CreateValPipeline(config.ImgSize);
             valDataset = new YOLODataset(valDataDir, config.ImgSize, valPipeline, useMosaic: false);
-            valDataset.CacheLabels();
+            valDataset.CacheLabels(config.NumClasses);
             Console.WriteLine($"Validation samples: {valDataset.Count}");
 
             // If val exists but has 0 GT boxes, mAP is guaranteed to be 0.0.
@@ -219,7 +243,7 @@ public class Trainer
 
                 var trainValPipeline = AugmentationPipeline.CreateValPipeline(config.ImgSize);
                 var trainAsVal = new YOLODataset(trainDataDir, config.ImgSize, trainValPipeline, useMosaic: false);
-                trainAsVal.CacheLabels();
+                trainAsVal.CacheLabels(config.NumClasses);
                 valDataset = trainAsVal;
                 Console.WriteLine($"  Fallback validation samples: {valDataset.Count}");
             }
@@ -621,9 +645,10 @@ public class Trainer
 
         var metric = new MAPMetric(numClasses);
 
-        int totalPredictions = 0;
+        int totalPostNmsPreds = 0;
         int totalGTs = 0;
         float maxConf = 0f;
+        int totalImages = 0;
 
         using (torch.no_grad())
         {
@@ -639,17 +664,37 @@ public class Trainer
 
                 for (long b = 0; b < batch; b++)
                 {
-                    var boxesT = boxes[b].T;
-                    var scoresT = scores[b].T;
+                    totalImages++;
 
-                    var (maxScores, maxClasses) = scoresT.max(dim: -1);
+                    // Apply NMS (matches Python ultralytics evaluation)
+                    // boxes: (B, 4, N) xywh, scores: (B, nc, N)
+                    var nmsOut = NMS.NonMaxSuppression(
+                        boxes[b].unsqueeze(0),
+                        scores[b].unsqueeze(0),
+                        confThres: 0.001,
+                        iouThres: 0.7,
+                        maxDet: 300,
+                        agnostic: false)[0]; // (K, 6) [x1,y1,x2,y2,conf,cls]
 
-                    var confMask = maxScores > 0.001;
-                    var filteredBoxes = boxesT[confMask];
-                    var filteredScores = maxScores[confMask];
-                    var filteredClasses = maxClasses[confMask];
+                    int numPred = (int)nmsOut.shape[0];
+                    var predBoxArr = new float[numPred, 4];
+                    var predScoreArr = new float[numPred];
+                    var predClassArr = new int[numPred];
 
-                    var predBoxesXyxy = Core.Utils.BboxUtils.Xywh2Xyxy(filteredBoxes);
+                    if (numPred > 0)
+                    {
+                        var outData = nmsOut.cpu().data<float>().ToArray();
+                        for (int i = 0; i < numPred; i++)
+                        {
+                            predBoxArr[i, 0] = outData[i * 6 + 0];
+                            predBoxArr[i, 1] = outData[i * 6 + 1];
+                            predBoxArr[i, 2] = outData[i * 6 + 2];
+                            predBoxArr[i, 3] = outData[i * 6 + 3];
+                            predScoreArr[i] = outData[i * 6 + 4];
+                            // Clamp class index to valid range [0, numClasses-1] for safety
+                            predClassArr[i] = Math.Clamp((int)outData[i * 6 + 5], 0, numClasses - 1);
+                        }
+                    }
 
                     var gtMask = maskGT[b, .., 0].to(ScalarType.Bool);
                     var gtBoxesImg = gtBboxes[b][gtMask];
@@ -658,39 +703,14 @@ public class Trainer
                     gtBoxesImg = gtBoxesImg * imgSize;
                     var gtClassesImg = gtLabelsImg[.., 0].to(ScalarType.Int64);
 
-                    int numPred = (int)predBoxesXyxy.shape[0];
                     int numGT = (int)gtBoxesImg.shape[0];
-
-                    totalPredictions += numPred;
-                    totalGTs += numGT;
-                    if (numPred > 0)
-                    {
-                        var batchMaxConf = filteredScores.max().cpu().item<float>();
-                        if (batchMaxConf > maxConf) maxConf = batchMaxConf;
-                    }
-
-                    var predBoxArr = new float[numPred, 4];
-                    var predScoreArr = new float[numPred];
-                    var predClassArr = new int[numPred];
                     var gtBoxArr = new float[numGT, 4];
                     var gtClassArr = new int[numGT];
 
+                    totalPostNmsPreds += numPred;
+                    totalGTs += numGT;
                     if (numPred > 0)
-                    {
-                        var predData = predBoxesXyxy.cpu().data<float>().ToArray();
-                        var scoreData = filteredScores.cpu().data<float>().ToArray();
-                        var classData = filteredClasses.cpu().data<long>().ToArray();
-
-                        for (int i = 0; i < numPred; i++)
-                        {
-                            predBoxArr[i, 0] = predData[i * 4 + 0];
-                            predBoxArr[i, 1] = predData[i * 4 + 1];
-                            predBoxArr[i, 2] = predData[i * 4 + 2];
-                            predBoxArr[i, 3] = predData[i * 4 + 3];
-                            predScoreArr[i] = scoreData[i];
-                            predClassArr[i] = (int)classData[i];
-                        }
-                    }
+                        maxConf = Math.Max(maxConf, predScoreArr.Max());
 
                     if (numGT > 0)
                     {
@@ -703,7 +723,8 @@ public class Trainer
                             gtBoxArr[i, 1] = gtData[i * 4 + 1];
                             gtBoxArr[i, 2] = gtData[i * 4 + 2];
                             gtBoxArr[i, 3] = gtData[i * 4 + 3];
-                            gtClassArr[i] = (int)gtClsData[i];
+                            // Clamp GT class index for safety
+                            gtClassArr[i] = Math.Clamp((int)gtClsData[i], 0, numClasses - 1);
                         }
                     }
 
@@ -717,9 +738,9 @@ public class Trainer
         {
             Console.Write(" [WARN: 0 GT boxes in val]");
         }
-        else if (totalPredictions == 0)
+        else if (totalPostNmsPreds == 0)
         {
-            Console.Write($" [WARN: 0 preds>0.001, GTs={totalGTs}]");
+            Console.Write($" [WARN: 0 preds after NMS, GTs={totalGTs}, imgs={totalImages}]");
         }
 
         var (map50, map5095, perClassAP50) = metric.Compute();

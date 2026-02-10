@@ -127,7 +127,7 @@ public static class NMS
             float y1i = boxesData[idx * 4 + 1];
             float x2i = boxesData[idx * 4 + 2];
             float y2i = boxesData[idx * 4 + 3];
-            float areaI = (x2i - x1i) * (y2i - y1i);
+            float areaI = Math.Max(0, x2i - x1i) * Math.Max(0, y2i - y1i);
 
             for (int j = i + 1; j < orderData.Length; j++)
             {
@@ -145,7 +145,7 @@ public static class NMS
                 float interY2 = Math.Min(y2i, y2j);
 
                 float inter = Math.Max(0, interX2 - interX1) * Math.Max(0, interY2 - interY1);
-                float areaJ = (x2j - x1j) * (y2j - y1j);
+                float areaJ = Math.Max(0, x2j - x1j) * Math.Max(0, y2j - y1j);
                 float iou = inter / (areaI + areaJ - inter + 1e-7f);
 
                 if (iou > iouThreshold)

@@ -55,13 +55,16 @@ public class YOLODataset
     /// <summary>
     /// Pre-cache all labels into memory.
     /// Logs diagnostics about missing label files and total GT box counts.
+    /// Optionally filters labels by class range [0, numClasses).
     /// </summary>
-    public void CacheLabels()
+    /// <param name="numClasses">If > 0, reject any label with classId >= numClasses.</param>
+    public void CacheLabels(int numClasses = -1)
     {
         labelCache = new List<BboxInstance>[imagePaths.Length];
         int missingLabels = 0;
         int emptyLabels = 0;
         int totalBoxes = 0;
+        int rejectedBoxes = 0;
         int firstMissingIdx = -1;
 
         for (int i = 0; i < imagePaths.Length; i++)
@@ -72,7 +75,17 @@ public class YOLODataset
                 if (firstMissingIdx < 0) firstMissingIdx = i;
             }
 
-            labelCache[i] = LabelParser.ParseYOLOLabel(labelPaths[i]);
+            var labels = LabelParser.ParseYOLOLabel(labelPaths[i]);
+
+            // Filter by class range if specified
+            if (numClasses > 0)
+            {
+                int before = labels.Count;
+                labels = labels.Where(l => l.ClassId >= 0 && l.ClassId < numClasses).ToList();
+                rejectedBoxes += before - labels.Count;
+            }
+
+            labelCache[i] = labels;
 
             if (labelCache[i].Count == 0 && File.Exists(labelPaths[i]))
                 emptyLabels++;
@@ -93,6 +106,11 @@ public class YOLODataset
         if (emptyLabels > 0)
         {
             Console.WriteLine($"  WARNING: {emptyLabels}/{imagePaths.Length} label files are empty or unparseable.");
+        }
+
+        if (rejectedBoxes > 0)
+        {
+            Console.WriteLine($"  WARNING: {rejectedBoxes} boxes rejected (classId out of range [0, {numClasses})).");
         }
 
         Console.WriteLine($"  Total GT boxes: {totalBoxes} across {imagePaths.Length} images");
