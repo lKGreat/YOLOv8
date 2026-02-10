@@ -138,6 +138,8 @@ public partial class AnnotationCanvas : UserControl
     public event EventHandler<RectAnnotation?>? AnnotationSelected;
     public event EventHandler<RectAnnotation>? AnnotationChanged;
     public event EventHandler<RectAnnotation>? AnnotationDeleted;
+    /// <summary>Fired when user requests class change via right-click menu. Args: (annotation, newClassId).</summary>
+    public event EventHandler<(RectAnnotation Annotation, int NewClassId)>? AnnotationClassChangeRequested;
     public event EventHandler<float>? ZoomChanged;
 
     // ── Properties ─────────────────────────────────────────────────
@@ -486,6 +488,13 @@ public partial class AnnotationCanvas : UserControl
             return;
         }
 
+        // Right-click → context menu on annotation
+        if (e.Button == MouseButtons.Right)
+        {
+            HandleRightClick(e.Location);
+            return;
+        }
+
         if (e.Button != MouseButtons.Left) return;
 
         var imgPt = ScreenToImage(e.Location);
@@ -746,6 +755,78 @@ public partial class AnnotationCanvas : UserControl
         ResizeHandle.Left or ResizeHandle.Right => Cursors.SizeWE,
         _ => Cursors.Default
     };
+
+    // ── Right-click context menu ──────────────────────────────────
+
+    private void HandleRightClick(Point screenLocation)
+    {
+        // Hit-test: find which annotation was right-clicked
+        RectAnnotation? hit = null;
+        for (int i = _annotations.Count - 1; i >= 0; i--)
+        {
+            var rect = AnnotationToScreenRect(_annotations[i]);
+            if (rect.Contains(screenLocation))
+            {
+                hit = _annotations[i];
+                break;
+            }
+        }
+
+        if (hit == null) return;
+
+        // Select it first
+        SelectedAnnotation = hit;
+
+        // Build context menu
+        var menu = new ContextMenuStrip();
+        menu.Font = new Font("Segoe UI", 9F);
+
+        // ── Delete ──
+        var deleteItem = new ToolStripMenuItem("Delete annotation");
+        deleteItem.ShortcutKeyDisplayString = "Del";
+        deleteItem.Image = null;
+        deleteItem.Click += (s, e) =>
+        {
+            _annotations.Remove(hit);
+            _selectedAnnotation = null;
+            AnnotationDeleted?.Invoke(this, hit);
+            AnnotationSelected?.Invoke(this, null);
+            InvalidateCanvas();
+        };
+        menu.Items.Add(deleteItem);
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // ── Change class sub-menu ──
+        if (_classNames.Count > 0)
+        {
+            var changeClassItem = new ToolStripMenuItem("Change class");
+            for (int i = 0; i < _classNames.Count; i++)
+            {
+                int classId = i;
+                string label = $"[{i}] {_classNames[i]}";
+                var classItem = new ToolStripMenuItem(label);
+                // Mark current class with a check
+                if (classId == hit.ClassId)
+                {
+                    classItem.Checked = true;
+                    classItem.Enabled = false;
+                }
+                classItem.Click += (s, e) =>
+                {
+                    int oldClass = hit.ClassId;
+                    hit.ClassId = classId;
+                    AnnotationClassChangeRequested?.Invoke(this, (hit, classId));
+                    AnnotationChanged?.Invoke(this, hit);
+                    InvalidateCanvas();
+                };
+                changeClassItem.DropDownItems.Add(classItem);
+            }
+            menu.Items.Add(changeClassItem);
+        }
+
+        menu.Show(drawPanel, screenLocation);
+    }
 
     // ── Invalidation ──────────────────────────────────────────────
 

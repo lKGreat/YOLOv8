@@ -82,6 +82,7 @@ public partial class AnnotationPanel : UserControl
         canvas.AnnotationDeleted += Canvas_AnnotationDeleted;
         canvas.AnnotationSelected += Canvas_AnnotationSelected;
         canvas.AnnotationChanged += Canvas_AnnotationChanged;
+        canvas.AnnotationClassChangeRequested += Canvas_AnnotationClassChangeRequested;
 
         // Image list
         lstImages.SelectedIndexChanged += LstImages_SelectedIndexChanged;
@@ -559,6 +560,14 @@ public partial class AnnotationPanel : UserControl
         RefreshAnnotationGrid();
     }
 
+    private void Canvas_AnnotationClassChangeRequested(object? sender, (RectAnnotation Annotation, int NewClassId) e)
+    {
+        // The canvas already updated the ClassId on the annotation object.
+        // We just need to refresh the grid to reflect the change.
+        RefreshAnnotationGrid();
+        UpdateStatusBar();
+    }
+
     // ════════════════════════════════════════════════════════════════
     // Annotation grid
     // ════════════════════════════════════════════════════════════════
@@ -736,9 +745,27 @@ public partial class AnnotationPanel : UserControl
             return null;
         }
 
+        // Auto-mark all images that have annotations as completed.
+        // This avoids the confusing requirement to manually "Mark Done"
+        // every single image before generating the dataset.
+        int autoMarked = 0;
+        foreach (var img in _project.Images)
+        {
+            if (!img.IsCompleted && img.Annotations.Count > 0)
+            {
+                img.IsCompleted = true;
+                autoMarked++;
+            }
+        }
+        if (autoMarked > 0)
+        {
+            RefreshImageList();
+            UpdateStatusBar();
+        }
+
         if (_project.CompletedCount == 0)
         {
-            ShowMessage("No completed images found. Mark images as complete first.", AntdUI.TType.Warn);
+            ShowMessage("No annotated images found. Please annotate at least one image first.", AntdUI.TType.Warn);
             return null;
         }
 
