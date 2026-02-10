@@ -240,26 +240,34 @@ public class MLNetDistillationTrainer
     ///
     /// 融合策略:
     /// - 保留所有原始 hard labels
-    /// - 对教师预测置信度 > scoreThreshold 且与 hard label IoU < 0.5 的框,
+    /// - 对教师预测置信度 > scoreThreshold 且与 hard label IoU &lt; 0.5 的框,
     ///   作为额外的 soft labels 添加（权重由 distillWeight 控制）
+    ///
+    /// 内存优化: 使用路径 + LoadImages 延迟加载，不在收集阶段存储图像像素。
     /// </summary>
     private IDataView GenerateSoftTargets(
         PredictionEngine<ObjectDetectionInput, ObjectDetectionOutput> teacherEngine,
         IDataView trainData)
     {
-        double alpha = _config.DistillWeight;
         double scoreThresh = _config.ScoreThreshold;
 
-        var softItems = new List<ObjectDetectionInput>();
+        var softItems = new List<ObjectDetectionTrainInput>();
 
-        // 遍历训练数据
-        var columnsNeeded = new[]
-        {
-            trainData.Schema["Image"],
-            trainData.Schema["Label"],
-            trainData.Schema["BoundingBoxes"]
-        };
-        var cursor = trainData.GetRowCursor(columnsNeeded);
+        // 请求的列: ImagePath(路径) + Image(延迟加载) + Label + BoundingBoxes
+        bool hasImagePath = trainData.Schema.Any(c => c.Name == "ImagePath");
+        var schemaColumns = new List<DataViewSchema.Column>();
+        if (hasImagePath)
+            schemaColumns.Add(trainData.Schema["ImagePath"]);
+        schemaColumns.Add(trainData.Schema["Image"]);
+        schemaColumns.Add(trainData.Schema["Label"]);
+        schemaColumns.Add(trainData.Schema["BoundingBoxes"]);
+
+        var cursor = trainData.GetRowCursor(schemaColumns.ToArray());
+
+        // ImagePath 列可能存在 (路径形式数据), 用于输出
+        ValueGetter<ReadOnlyMemory<char>>? pathGetter = null;
+        if (hasImagePath)
+            pathGetter = cursor.GetGetter<ReadOnlyMemory<char>>(trainData.Schema["ImagePath"]);
 
         var imageGetter = cursor.GetGetter<MLImage>(trainData.Schema["Image"]);
         var labelGetter = cursor.GetGetter<VBuffer<uint>>(trainData.Schema["Label"]);
@@ -269,6 +277,16 @@ public class MLNetDistillationTrainer
 
         while (cursor.MoveNext())
         {
+            // 读取图像路径（如有）
+            string imagePath = "";
+            if (pathGetter != null)
+            {
+                ReadOnlyMemory<char> pathMem = default;
+                pathGetter(ref pathMem);
+                imagePath = pathMem.ToString();
+            }
+
+            // 延迟加载的图像 —— 仅此行在内存中
             MLImage image = default!;
             imageGetter(ref image);
 
@@ -278,19 +296,22 @@ public class MLNetDistillationTrainer
             VBuffer<float> boxes = default;
             boxGetter(ref boxes);
 
-            // 教师推理
+            var hardLabels = labels.DenseValues().ToArray();
+            var hardBoxes = boxes.DenseValues().ToArray();
+
+            // 教师推理（使用当前行图像，不额外存储）
             var input = new ObjectDetectionInput
             {
                 Image = image,
-                Label = labels.DenseValues().ToArray(),
-                BoundingBoxes = boxes.DenseValues().ToArray()
+                Label = hardLabels,
+                BoundingBoxes = hardBoxes
             };
 
             var teacherPred = teacherEngine.Predict(input);
 
             // 融合: 原始 hard labels + 教师 soft labels
-            var mergedLabels = new List<uint>(input.Label);
-            var mergedBoxes = new List<float>(input.BoundingBoxes);
+            var mergedLabels = new List<uint>(hardLabels);
+            var mergedBoxes = new List<float>(hardBoxes);
 
             if (teacherPred.PredictedLabel != null && teacherPred.Score != null)
             {
@@ -308,17 +329,17 @@ public class MLNetDistillationTrainer
 
                             // 检查是否与现有 hard label 重叠度高
                             bool overlaps = false;
-                            for (int j = 0; j < input.Label.Length; j++)
+                            for (int j = 0; j < hardLabels.Length; j++)
                             {
                                 int bIdx = j * 4;
-                                if (bIdx + 3 < input.BoundingBoxes.Length)
+                                if (bIdx + 3 < hardBoxes.Length)
                                 {
                                     float iou = ComputeIoU(
                                         tx0, ty0, tx1, ty1,
-                                        input.BoundingBoxes[bIdx],
-                                        input.BoundingBoxes[bIdx + 1],
-                                        input.BoundingBoxes[bIdx + 2],
-                                        input.BoundingBoxes[bIdx + 3]);
+                                        hardBoxes[bIdx],
+                                        hardBoxes[bIdx + 1],
+                                        hardBoxes[bIdx + 2],
+                                        hardBoxes[bIdx + 3]);
 
                                     if (iou > 0.5f)
                                     {
@@ -339,9 +360,10 @@ public class MLNetDistillationTrainer
                 }
             }
 
-            softItems.Add(new ObjectDetectionInput
+            // 仅存路径 + 融合后的标签，不存图像像素
+            softItems.Add(new ObjectDetectionTrainInput
             {
-                Image = image,
+                ImagePath = imagePath,
                 Label = mergedLabels.ToArray(),
                 BoundingBoxes = mergedBoxes.ToArray()
             });
@@ -352,7 +374,13 @@ public class MLNetDistillationTrainer
         }
 
         Console.WriteLine($"  soft targets 生成完成: {processedCount} 张图像");
-        return _mlContext.Data.LoadFromEnumerable(softItems);
+
+        // 用路径 + LoadImages 创建延迟加载的 IDataView
+        var pathData = _mlContext.Data.LoadFromEnumerable(softItems);
+        var loadImagesTransformer = _mlContext.Transforms
+            .LoadImages("Image", imageFolder: null, inputColumnName: "ImagePath")
+            .Fit(pathData);
+        return loadImagesTransformer.Transform(pathData);
     }
 
     /// <summary>

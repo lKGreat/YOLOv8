@@ -11,6 +11,9 @@ namespace YOLO.MLNet.Data;
 ///
 /// YOLO 标签格式 (每行): class_id cx cy w h (归一化 0~1)
 /// ML.NET 需要: MLImage + uint[] Labels (1-based) + float[] BoundingBoxes (x0,y0,x1,y1 绝对像素)
+///
+/// 关键设计: 使用 路径 + LoadImages 延迟加载，不在收集阶段读取图像像素，
+///           避免大规模数据集导致 OutOfMemory。
 /// </summary>
 public static class YoloToMLNetAdapter
 {
@@ -21,6 +24,7 @@ public static class YoloToMLNetAdapter
 
     /// <summary>
     /// 从 DatasetConfig (YAML) 加载训练集/验证集/测试集为 IDataView。
+    /// 返回带 Image 列的延迟加载 IDataView（图像按需从磁盘读取）。
     /// </summary>
     public static IDataView LoadFromDatasetConfig(MLContext mlContext, DatasetConfig config, string split = "train")
     {
@@ -37,13 +41,15 @@ public static class YoloToMLNetAdapter
 
     /// <summary>
     /// 从图像目录加载数据集。标签文件位于同级 labels/ 目录或图像路径中 images/ 替换为 labels/。
+    /// 返回的 IDataView 包含列: ImagePath(string), Label(VBuffer&lt;uint&gt;),
+    /// BoundingBoxes(VBuffer&lt;float&gt;), Image(MLImage, 延迟加载)。
     /// </summary>
     public static IDataView LoadFromDirectory(MLContext mlContext, string imageDir)
     {
         if (!Directory.Exists(imageDir))
             throw new DirectoryNotFoundException($"图像目录不存在: {imageDir}");
 
-        var items = new List<ObjectDetectionInput>();
+        var items = new List<ObjectDetectionTrainInput>();
         var imageFiles = Directory.EnumerateFiles(imageDir, "*.*", SearchOption.AllDirectories)
             .Where(f => ImageExtensions.Contains(Path.GetExtension(f)))
             .OrderBy(f => f)
@@ -54,18 +60,26 @@ public static class YoloToMLNetAdapter
             var labelPath = FindLabelFile(imagePath);
             var (labels, boxes) = ParseYoloLabel(labelPath, imagePath);
 
-            var item = new ObjectDetectionInput
+            items.Add(new ObjectDetectionTrainInput
             {
-                Image = MLImage.CreateFromFile(imagePath),
+                ImagePath = imagePath,   // 仅存路径，不加载图像
                 Label = labels,
                 BoundingBoxes = boxes
-            };
-            items.Add(item);
+            });
         }
 
-        Console.WriteLine($"  ML.NET 数据加载: {items.Count} 张图像, 来自 {imageDir}");
+        Console.WriteLine($"  ML.NET 数据加载: {items.Count} 张图像 (延迟加载), 来自 {imageDir}");
 
-        return mlContext.Data.LoadFromEnumerable(items);
+        // 1) 创建轻量 IDataView（只有路径 + 标签，不含图像像素）
+        var pathData = mlContext.Data.LoadFromEnumerable(items);
+
+        // 2) 通过 LoadImages 延迟变换，在游标遍历时按需从磁盘读取图像
+        //    imageFolder = null 表示 ImagePath 是绝对路径
+        var loadImagesEstimator = mlContext.Transforms
+            .LoadImages("Image", imageFolder: null, inputColumnName: "ImagePath");
+        var loadImagesTransformer = loadImagesEstimator.Fit(pathData);
+
+        return loadImagesTransformer.Transform(pathData);
     }
 
     /// <summary>
