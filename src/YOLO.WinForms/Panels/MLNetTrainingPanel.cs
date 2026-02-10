@@ -53,6 +53,17 @@ public partial class MLNetTrainingPanel : UserControl
 
         _service.LogMessage += (s, msg) => AppendLog(msg);
 
+        _service.LiveProgress += (s, p) =>
+        {
+            // 不刷屏到日志，只用于状态栏实时显示（epoch/step 尽力解析）
+            var stepStr = p.Step is > 0
+                ? (p.TotalSteps is > 0 ? $"{p.Step}/{p.TotalSteps}" : $"{p.Step}")
+                : "未知";
+
+            StatusChanged?.Invoke(this,
+                $"{p.Stage} | Epoch {p.CompletedEpochs}/{p.TotalEpochs} | step {stepStr} | {p.Elapsed:hh\\:mm\\:ss}");
+        };
+
         _service.EpochCompleted += (s, m) =>
         {
             _metricsChart?.AddEpoch(
@@ -205,18 +216,23 @@ public partial class MLNetTrainingPanel : UserControl
             var consoleWriter = new TextBoxConsoleWriter(this, txtLog);
             var originalOut = Console.Out;
             Console.SetOut(consoleWriter);
-
-            var result = await _service.TrainAsync(
-                config, dataConfig.Train, dataConfig.Val,
-                dataConfig.Names.ToArray());
-
-            Console.SetOut(originalOut);
-
-            if (result != null)
+            try
             {
-                StatusChanged?.Invoke(this,
-                    $"训练完成: fitness={result.BestFitness:F4} " +
-                    $"mAP50={result.BestMap50:F4}");
+                var result = await _service.TrainAsync(
+                    config, dataConfig.Train, dataConfig.Val,
+                    dataConfig.Names.ToArray());
+
+                if (result != null)
+                {
+                    StatusChanged?.Invoke(this,
+                        $"训练完成: fitness={result.BestFitness:F4} " +
+                        $"mAP50={result.BestMap50:F4}");
+                }
+            }
+            finally
+            {
+                // 确保异常/取消时也能恢复 Console 输出
+                Console.SetOut(originalOut);
             }
         }
         catch (Exception ex)

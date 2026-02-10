@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.ML;
 using Microsoft.ML.Data;
 using Microsoft.ML.TorchSharp;
@@ -53,10 +55,43 @@ public class MLNetDetectionTrainer
     private readonly MLNetTrainConfig _config;
     private readonly MLContext _mlContext;
 
-    public MLNetDetectionTrainer(MLNetTrainConfig config, int? seed = null)
+    private readonly Action<string> _log;
+
+    // Live progress state (best-effort parsed from ML.NET logs)
+    private long _lastLogAtUtcTicks = DateTime.UtcNow.Ticks; // Interlocked.Read/Exchange
+    private volatile string? _lastLog;
+    private int _step = -1;        // Volatile.Read/Write, -1 表示未知
+    private int _totalSteps = -1;  // Volatile.Read/Write, -1 表示未知
+    private int _epoch = -1;       // Volatile.Read/Write, -1 表示未知
+    private int _totalEpochs = -1; // Volatile.Read/Write, -1 表示未知
+
+    // Live progress callback state (valid during Train())
+    private volatile string _stage = "Fit";
+    private volatile int _stageCompletedEpochs;
+    private volatile int _stageTotalEpochs;
+    private long _lastProgressReportTicks; // Stopwatch ticks (Interlocked.Read/Exchange)
+    private Action<MLNetLiveProgress>? _onLiveProgress;
+    private Stopwatch? _trainStopwatch;
+
+    // NOTE: ML.NET 内部日志格式并不稳定，这里用多套正则“尽可能解析”
+    private static readonly Regex StepRegex = new(
+        @"\bStep\s*(?<s>\d+)\s*/\s*(?<t>\d+)\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex EpochRegex = new(
+        @"\bEpoch\s*(?<e>\d+)\s*/\s*(?<t>\d+)\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex IterRegex = new(
+        @"\bIter(?:ation)?\s*(?<s>\d+)\s*/\s*(?<t>\d+)\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public MLNetDetectionTrainer(MLNetTrainConfig config, int? seed = null, Action<string>? logSink = null)
     {
         _config = config;
         _mlContext = new MLContext(seed ?? 0);
+
+        _log = logSink ?? Console.WriteLine;
 
         // 订阅 ML.NET 内部日志，转发到 Console 以便 GUI 日志面板可见
         // ObjectDetectionTrainer 的 Step/Loss/LR 日志走 ch.Info()，不走 Console
@@ -66,7 +101,7 @@ public class MLNetDetectionTrainer
     /// <summary>
     /// ML.NET 内部日志转发。过滤空消息和过于冗长的调试信息。
     /// </summary>
-    private static void OnMLContextLog(object? sender, LoggingEventArgs e)
+    private void OnMLContextLog(object? sender, LoggingEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(e.Message)) return;
 
@@ -75,7 +110,94 @@ public class MLNetDetectionTrainer
         if (msg.StartsWith("Schema") || msg.StartsWith("Column") ||
             msg.Length > 500) return;
 
-        Console.WriteLine($"  [{e.Source}] {msg}");
+        var formatted = $"  [{e.Source}] {msg}";
+        Interlocked.Exchange(ref _lastLogAtUtcTicks, DateTime.UtcNow.Ticks);
+        _lastLog = formatted;
+
+        TryParseProgress(msg);
+
+        _log(formatted);
+
+        // 尽可能将解析出的 step/epoch 实时推送给 UI（节流，避免高频刷 UI）
+        ReportLiveProgressThrottled();
+    }
+
+    private void ReportLiveProgressThrottled()
+    {
+        var cb = _onLiveProgress;
+        var sw = _trainStopwatch;
+        if (cb == null || sw == null) return;
+
+        long now = Stopwatch.GetTimestamp();
+        long last = Interlocked.Read(ref _lastProgressReportTicks);
+
+        // 约 5Hz 刷新上限（200ms）
+        if (last != 0 && (now - last) < (Stopwatch.Frequency / 5))
+            return;
+
+        Interlocked.Exchange(ref _lastProgressReportTicks, now);
+        cb(BuildSnapshot(_stage, _stageCompletedEpochs, _stageTotalEpochs, sw.Elapsed));
+    }
+
+    private void TryParseProgress(string msg)
+    {
+        // Step
+        var mStep = StepRegex.Match(msg);
+        if (mStep.Success)
+        {
+            if (int.TryParse(mStep.Groups["s"].Value, out var s)) Volatile.Write(ref _step, s);
+            if (int.TryParse(mStep.Groups["t"].Value, out var t)) Volatile.Write(ref _totalSteps, t);
+        }
+        else
+        {
+            // 有些日志用 Iter/Iteration
+            var mIter = IterRegex.Match(msg);
+            if (mIter.Success)
+            {
+                if (int.TryParse(mIter.Groups["s"].Value, out var s)) Volatile.Write(ref _step, s);
+                if (int.TryParse(mIter.Groups["t"].Value, out var t)) Volatile.Write(ref _totalSteps, t);
+            }
+        }
+
+        // Epoch
+        var mEpoch = EpochRegex.Match(msg);
+        if (mEpoch.Success)
+        {
+            if (int.TryParse(mEpoch.Groups["e"].Value, out var e)) Volatile.Write(ref _epoch, e);
+            if (int.TryParse(mEpoch.Groups["t"].Value, out var t)) Volatile.Write(ref _totalEpochs, t);
+        }
+    }
+
+    private MLNetLiveProgress BuildSnapshot(
+        string stage,
+        int completedEpochs,
+        int totalEpochs,
+        TimeSpan elapsed)
+    {
+        // 优先用 ML.NET 日志解析到的 epoch/totalEpoch（如果它给了的话）
+        var parsedEpoch = Volatile.Read(ref _epoch);
+        var parsedTotalEpoch = Volatile.Read(ref _totalEpochs);
+
+        int finalCompleted = parsedEpoch > 0 ? Math.Max(completedEpochs, parsedEpoch) : completedEpochs;
+        int finalTotal = parsedTotalEpoch > 0 ? Math.Max(totalEpochs, parsedTotalEpoch) : totalEpochs;
+
+        int step = Volatile.Read(ref _step);
+        int totalStep = Volatile.Read(ref _totalSteps);
+
+        var lastLogTicks = Interlocked.Read(ref _lastLogAtUtcTicks);
+        var lastLogAtUtc = new DateTime(lastLogTicks, DateTimeKind.Utc);
+
+        return new MLNetLiveProgress
+        {
+            Stage = stage,
+            CompletedEpochs = finalCompleted,
+            TotalEpochs = finalTotal,
+            Step = step > 0 ? step : null,
+            TotalSteps = totalStep > 0 ? totalStep : null,
+            Elapsed = elapsed,
+            LastLog = _lastLog,
+            LastLogAtUtc = lastLogAtUtc
+        };
     }
 
     /// <summary>
@@ -92,16 +214,20 @@ public class MLNetDetectionTrainer
         string? valDataDir = null,
         string[]? classNames = null,
         Action<MLNetEpochMetrics>? onEpochCompleted = null,
+        Action<MLNetLiveProgress>? onLiveProgress = null,
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
+        _trainStopwatch = sw;
+        _onLiveProgress = onLiveProgress;
+        Interlocked.Exchange(ref _lastProgressReportTicks, 0);
 
-        Console.WriteLine($"[ML.NET] 训练设备: 自动检测");
-        Console.WriteLine($"[ML.NET] 模型架构: AutoFormerV2 (Vision Transformer)");
-        Console.WriteLine($"[ML.NET] 训练轮数: {_config.MaxEpoch}, 学习率: {_config.InitLearningRate}");
+        _log($"[ML.NET] 训练设备: 自动检测");
+        _log($"[ML.NET] 模型架构: AutoFormerV2 (Vision Transformer)");
+        _log($"[ML.NET] 训练轮数: {_config.MaxEpoch}, 学习率: {_config.InitLearningRate}");
 
         // 加载训练数据
-        Console.WriteLine($"[ML.NET] 加载训练数据: {trainDataDir}");
+        _log($"[ML.NET] 加载训练数据: {trainDataDir}");
         var trainData = YoloToMLNetAdapter.LoadFromDirectory(_mlContext, trainDataDir);
         int trainCount = YoloToMLNetAdapter.CountImages(trainDataDir);
 
@@ -109,7 +235,7 @@ public class MLNetDetectionTrainer
         IDataView? valData = null;
         if (valDataDir != null && Directory.Exists(valDataDir))
         {
-            Console.WriteLine($"[ML.NET] 加载验证数据: {valDataDir}");
+            _log($"[ML.NET] 加载验证数据: {valDataDir}");
             valData = YoloToMLNetAdapter.LoadFromDirectory(_mlContext, valDataDir);
         }
 
@@ -183,10 +309,76 @@ public class MLNetDetectionTrainer
             var pipeline = _mlContext.MulticlassClassification.Trainers
                 .ObjectDetection(stageOptions);
 
-            Console.WriteLine($"[ML.NET] 训练阶段 {completedEpochs + 1}-{completedEpochs + stageEpochs}/{_config.MaxEpoch}...");
-            Console.WriteLine($"[ML.NET] Fit() 执行中 (AutoFormerV2 ViT 训练较慢，请耐心等待)...");
+            _log($"[ML.NET] 训练阶段 {completedEpochs + 1}-{completedEpochs + stageEpochs}/{_config.MaxEpoch}...");
+            _log($"[ML.NET] Fit() 执行中 (AutoFormerV2 ViT 训练较慢，请耐心等待)...");
+
+            _stage = "Fit";
+            _stageCompletedEpochs = completedEpochs;
+            _stageTotalEpochs = _config.MaxEpoch;
+            ReportLiveProgressThrottled();
+
+            // Fit() 会长时间阻塞：启动“心跳”线程，避免 UI 看起来卡死
+            using var heartCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var stageStartCompleted = completedEpochs;
+            var stageTotal = _config.MaxEpoch;
+            var heartTask = Task.Run(async () =>
+            {
+                var proc = Process.GetCurrentProcess();
+                var lastBeat = DateTime.UtcNow;
+                while (!heartCts.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(2), heartCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    var now = DateTime.UtcNow;
+                    if (now - lastBeat < TimeSpan.FromSeconds(1.8))
+                        continue;
+                    lastBeat = now;
+
+                    // 如果最近已有训练日志在刷，就不额外刷心跳，避免刷屏
+                    var lastLogTicks = Interlocked.Read(ref _lastLogAtUtcTicks);
+                    var lastLogAtUtc = new DateTime(lastLogTicks, DateTimeKind.Utc);
+                    bool recentlyActive = (now - lastLogAtUtc) <= TimeSpan.FromSeconds(2.2);
+
+                    var snap = BuildSnapshot(
+                        stage: "Fit",
+                        completedEpochs: stageStartCompleted,
+                        totalEpochs: stageTotal,
+                        elapsed: sw.Elapsed);
+
+                    onLiveProgress?.Invoke(snap);
+
+                    if (recentlyActive) continue;
+
+                    proc.Refresh();
+                    double wsMb = proc.WorkingSet64 / 1024.0 / 1024.0;
+                    double gcMb = GC.GetTotalMemory(false) / 1024.0 / 1024.0;
+
+                    var stepStr = snap.Step is > 0
+                        ? (snap.TotalSteps is > 0 ? $"{snap.Step}/{snap.TotalSteps}" : $"{snap.Step}")
+                        : "未知";
+
+                    _log($"[ML.NET] 心跳  已运行 {sw.Elapsed:hh\\:mm\\:ss}  " +
+                         $"进度 {snap.CompletedEpochs}/{snap.TotalEpochs}  step={stepStr}  " +
+                         $"RAM(ws={wsMb:F0}MB,gc={gcMb:F0}MB)");
+                }
+            }, heartCts.Token);
+
             var transformer = pipeline.Fit(trainData);
+            heartCts.Cancel();
+            try { heartTask.Wait(TimeSpan.FromSeconds(1)); } catch { /* ignore */ }
             completedEpochs += stageEpochs;
+
+            _stage = "Validate";
+            _stageCompletedEpochs = completedEpochs;
+            _stageTotalEpochs = _config.MaxEpoch;
+            ReportLiveProgressThrottled();
 
             // 在验证集上评估
             double stageMap50 = 0, stageMap5095 = 0;
@@ -215,7 +407,7 @@ public class MLNetDetectionTrainer
                 // 保存最佳模型
                 bestModelPath = Path.Combine(weightsDir, "best.zip");
                 SaveModel(transformer, trainData.Schema, bestModelPath);
-                Console.WriteLine($"  * 保存最佳模型 (fitness={fitness:F4})");
+                _log($"  * 保存最佳模型 (fitness={fitness:F4})");
 
                 bestTransformer = transformer;
             }
@@ -230,7 +422,7 @@ public class MLNetDetectionTrainer
 
             // 回调
             var mark = isBest ? " *" : "";
-            Console.WriteLine($"  Epoch {completedEpochs}/{_config.MaxEpoch}" +
+            _log($"  Epoch {completedEpochs}/{_config.MaxEpoch}" +
                 $"  mAP50={stageMap50:F4}  mAP50-95={stageMap5095:F4}" +
                 $"  fitness={fitness:F4}{mark}");
 
@@ -247,19 +439,25 @@ public class MLNetDetectionTrainer
         }
 
         sw.Stop();
+        _stage = "Complete";
+        _stageCompletedEpochs = Math.Min(_config.MaxEpoch, completedEpochs);
+        _stageTotalEpochs = _config.MaxEpoch;
+        ReportLiveProgressThrottled();
+        _onLiveProgress = null;
+        _trainStopwatch = null;
 
         // 保存训练参数
         SaveTrainArgs(_config, trainCount, classNames);
 
-        Console.WriteLine();
-        Console.WriteLine("=== ML.NET 训练总结 ===");
-        Console.WriteLine($"  架构:         AutoFormerV2");
-        Console.WriteLine($"  最佳轮次:     {bestEpoch}");
-        Console.WriteLine($"  最佳 fitness: {bestFitness:F4}");
-        Console.WriteLine($"  mAP@0.5:      {bestMap50:F4}");
-        Console.WriteLine($"  mAP@0.5-0.95: {bestMap5095:F4}");
-        Console.WriteLine($"  训练时间:     {sw.Elapsed:hh\\:mm\\:ss}");
-        Console.WriteLine($"  模型路径:     {bestModelPath}");
+        _log("");
+        _log("=== ML.NET 训练总结 ===");
+        _log($"  架构:         AutoFormerV2");
+        _log($"  最佳轮次:     {bestEpoch}");
+        _log($"  最佳 fitness: {bestFitness:F4}");
+        _log($"  mAP@0.5:      {bestMap50:F4}");
+        _log($"  mAP@0.5-0.95: {bestMap5095:F4}");
+        _log($"  训练时间:     {sw.Elapsed:hh\\:mm\\:ss}");
+        _log($"  模型路径:     {bestModelPath}");
 
         return new MLNetTrainResult
         {

@@ -27,6 +27,11 @@ public class MLNetTrainingService
     /// <summary>通用日志消息。</summary>
     public event EventHandler<string>? LogMessage;
 
+    /// <summary>
+    /// ML.NET 训练期间的实时进度（尽力从日志解析 step/epoch，并提供心跳）。
+    /// </summary>
+    public event EventHandler<MLNetLiveProgress>? LiveProgress;
+
     public bool IsRunning => _cts != null && !_cts.IsCancellationRequested;
 
     /// <summary>
@@ -56,7 +61,9 @@ public class MLNetTrainingService
                     LogMessage?.Invoke(this, $"[ML.NET] 教师模型: {config.TeacherModelPath}");
                     LogMessage?.Invoke(this, $"[ML.NET] 蒸馏温度: {config.DistillTemperature}, 权重: {config.DistillWeight}");
 
-                    var distillTrainer = new MLNetDistillationTrainer(config);
+                    var distillTrainer = new MLNetDistillationTrainer(
+                        config,
+                        logSink: msg => LogMessage?.Invoke(this, msg));
                     result = distillTrainer.Train(
                         trainDataDir, valDataDir, classNames,
                         metrics =>
@@ -64,16 +71,28 @@ public class MLNetTrainingService
                             EpochCompleted?.Invoke(this, metrics);
                             ct.ThrowIfCancellationRequested();
                         },
+                        live =>
+                        {
+                            LiveProgress?.Invoke(this, live);
+                            ct.ThrowIfCancellationRequested();
+                        },
                         ct);
                 }
                 else
                 {
-                    var trainer = new MLNetDetectionTrainer(config);
+                    var trainer = new MLNetDetectionTrainer(
+                        config,
+                        logSink: msg => LogMessage?.Invoke(this, msg));
                     result = trainer.Train(
                         trainDataDir, valDataDir, classNames,
                         metrics =>
                         {
                             EpochCompleted?.Invoke(this, metrics);
+                            ct.ThrowIfCancellationRequested();
+                        },
+                        live =>
+                        {
+                            LiveProgress?.Invoke(this, live);
                             ct.ThrowIfCancellationRequested();
                         },
                         ct);

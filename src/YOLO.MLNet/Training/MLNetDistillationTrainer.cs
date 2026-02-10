@@ -22,11 +22,13 @@ public class MLNetDistillationTrainer
 {
     private readonly MLNetTrainConfig _config;
     private readonly MLContext _mlContext;
+    private readonly Action<string> _log;
 
-    public MLNetDistillationTrainer(MLNetTrainConfig config, int? seed = null)
+    public MLNetDistillationTrainer(MLNetTrainConfig config, int? seed = null, Action<string>? logSink = null)
     {
         _config = config;
         _mlContext = new MLContext(seed ?? 0);
+        _log = logSink ?? Console.WriteLine;
 
         // 订阅 ML.NET 内部日志，转发到 Console 以便 GUI 日志面板可见
         _mlContext.Log += OnMLContextLog;
@@ -35,13 +37,13 @@ public class MLNetDistillationTrainer
     /// <summary>
     /// ML.NET 内部日志转发。
     /// </summary>
-    private static void OnMLContextLog(object? sender, LoggingEventArgs e)
+    private void OnMLContextLog(object? sender, LoggingEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(e.Message)) return;
         var msg = e.Message.Trim();
         if (msg.StartsWith("Schema") || msg.StartsWith("Column") ||
             msg.Length > 500) return;
-        Console.WriteLine($"  [{e.Source}] {msg}");
+        _log($"  [{e.Source}] {msg}");
     }
 
     /// <summary>
@@ -57,13 +59,14 @@ public class MLNetDistillationTrainer
         string? valDataDir = null,
         string[]? classNames = null,
         Action<MLNetEpochMetrics>? onEpochCompleted = null,
+        Action<MLNetLiveProgress>? onLiveProgress = null,
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
 
-        Console.WriteLine("═══════════════════════════════════════════════════");
-        Console.WriteLine("       ML.NET 两阶段蒸馏训练");
-        Console.WriteLine("═══════════════════════════════════════════════════");
+        _log("═══════════════════════════════════════════════════");
+        _log("       ML.NET 两阶段蒸馏训练");
+        _log("═══════════════════════════════════════════════════");
 
         // 验证教师模型
         if (string.IsNullOrEmpty(_config.TeacherModelPath) || !File.Exists(_config.TeacherModelPath))
@@ -72,23 +75,24 @@ public class MLNetDistillationTrainer
                 $"教师模型不存在: {_config.TeacherModelPath}");
         }
 
-        Console.WriteLine($"[阶段一] 教师模型: {_config.TeacherModelPath}");
-        Console.WriteLine($"[阶段一] 蒸馏温度: {_config.DistillTemperature}");
-        Console.WriteLine($"[阶段一] 蒸馏权重: {_config.DistillWeight}");
-        Console.WriteLine();
+        _log($"[阶段一] 教师模型: {_config.TeacherModelPath}");
+        _log($"[阶段一] 蒸馏温度: {_config.DistillTemperature}");
+        _log($"[阶段一] 蒸馏权重: {_config.DistillWeight}");
+        _log("");
 
         // ═══════════════════════════════════════════════
         // 阶段一: 基础训练 (学生模型)
         // ═══════════════════════════════════════════════
-        Console.WriteLine("━━━ 阶段一: 基础训练 ━━━");
+        _log("━━━ 阶段一: 基础训练 ━━━");
 
-        var baseTrainer = new MLNetDetectionTrainer(_config);
+        var baseTrainer = new MLNetDetectionTrainer(_config, logSink: _log);
         var baseResult = baseTrainer.Train(
             trainDataDir, valDataDir, classNames,
             metrics =>
             {
                 onEpochCompleted?.Invoke(metrics);
             },
+            live => onLiveProgress?.Invoke(live),
             cancellationToken);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -98,35 +102,36 @@ public class MLNetDistillationTrainer
             throw new InvalidOperationException("阶段一训练失败: 未生成模型文件");
         }
 
-        Console.WriteLine();
-        Console.WriteLine($"[阶段一完成] fitness={baseResult.BestFitness:F4}, mAP50={baseResult.BestMap50:F4}");
-        Console.WriteLine();
+        _log("");
+        _log($"[阶段一完成] fitness={baseResult.BestFitness:F4}, mAP50={baseResult.BestMap50:F4}");
+        _log("");
 
         // ═══════════════════════════════════════════════
         // 阶段二: 蒸馏微调
         // ═══════════════════════════════════════════════
-        Console.WriteLine("━━━ 阶段二: 蒸馏微调 ━━━");
+        _log("━━━ 阶段二: 蒸馏微调 ━━━");
 
         var distillResult = RunDistillationStage(
             trainDataDir, valDataDir, classNames,
             baseResult.ModelPath, _config.TeacherModelPath!,
             baseResult,
             onEpochCompleted,
+            onLiveProgress,
             cancellationToken);
 
         sw.Stop();
         distillResult = distillResult with { TrainingTime = sw.Elapsed };
 
-        Console.WriteLine();
-        Console.WriteLine("═══════════════════════════════════════════════════");
-        Console.WriteLine("       蒸馏训练总结");
-        Console.WriteLine("═══════════════════════════════════════════════════");
-        Console.WriteLine($"  阶段一 fitness: {baseResult.BestFitness:F4}");
-        Console.WriteLine($"  阶段二 fitness: {distillResult.BestFitness:F4}");
-        Console.WriteLine($"  提升:           {distillResult.BestFitness - baseResult.BestFitness:+F4;-F4;0}");
-        Console.WriteLine($"  总训练时间:     {sw.Elapsed:hh\\:mm\\:ss}");
-        Console.WriteLine($"  最终模型:       {distillResult.ModelPath}");
-        Console.WriteLine("═══════════════════════════════════════════════════");
+        _log("");
+        _log("═══════════════════════════════════════════════════");
+        _log("       蒸馏训练总结");
+        _log("═══════════════════════════════════════════════════");
+        _log($"  阶段一 fitness: {baseResult.BestFitness:F4}");
+        _log($"  阶段二 fitness: {distillResult.BestFitness:F4}");
+        _log($"  提升:           {distillResult.BestFitness - baseResult.BestFitness:+F4;-F4;0}");
+        _log($"  总训练时间:     {sw.Elapsed:hh\\:mm\\:ss}");
+        _log($"  最终模型:       {distillResult.ModelPath}");
+        _log("═══════════════════════════════════════════════════");
 
         return distillResult;
     }
@@ -148,10 +153,11 @@ public class MLNetDistillationTrainer
         string teacherModelPath,
         MLNetTrainResult baseResult,
         Action<MLNetEpochMetrics>? onEpochCompleted,
+        Action<MLNetLiveProgress>? onLiveProgress,
         CancellationToken cancellationToken)
     {
         // 加载教师模型
-        Console.WriteLine($"  加载教师模型: {teacherModelPath}");
+        _log($"  加载教师模型: {teacherModelPath}");
         var teacherModel = _mlContext.Model.Load(teacherModelPath, out var teacherSchema);
         var teacherEngine = _mlContext.Model.CreatePredictionEngine<ObjectDetectionInput, ObjectDetectionOutput>(teacherModel);
 
@@ -164,10 +170,10 @@ public class MLNetDistillationTrainer
 
         // 创建带 soft targets 的增强训练数据
         // 通过教师模型对训练数据推理, 生成 soft targets
-        Console.WriteLine("  生成教师 soft targets...");
+        _log("  生成教师 soft targets...");
         var softTrainData = GenerateSoftTargets(teacherEngine, trainData);
 
-        Console.WriteLine($"  蒸馏训练: {_config.DistillEpochs} 轮, lr={_config.DistillLearningRate}");
+        _log($"  蒸馏训练: {_config.DistillEpochs} 轮, lr={_config.DistillLearningRate}");
 
         // 用教师生成的 soft labels 重新训练学生模型
         // soft targets 融合方式: 将教师的高置信度预测框混入标签中
@@ -191,7 +197,7 @@ public class MLNetDistillationTrainer
         var pipeline = _mlContext.MulticlassClassification.Trainers
             .ObjectDetection(distillOptions);
 
-        Console.WriteLine("  蒸馏微调中...");
+        _log("  蒸馏微调中...");
         var transformer = pipeline.Fit(softTrainData);
 
         // 评估蒸馏后的模型
@@ -229,12 +235,21 @@ public class MLNetDistillationTrainer
             IsBest = fitness > baseResult.BestFitness
         });
 
+        // 尽力推一条 live progress，提示阶段二已结束
+        onLiveProgress?.Invoke(new MLNetLiveProgress
+        {
+            Stage = "Distill",
+            CompletedEpochs = _config.MaxEpoch + _config.DistillEpochs,
+            TotalEpochs = _config.MaxEpoch + _config.DistillEpochs,
+            Elapsed = baseResult.TrainingTime
+        });
+
         // 如果蒸馏后更好, 使用蒸馏模型; 否则保留基础模型
         bool distillBetter = fitness > baseResult.BestFitness;
         string finalModelPath = distillBetter ? distillModelPath : baseResult.ModelPath;
 
-        Console.WriteLine($"  蒸馏后 fitness={fitness:F4} (基础={baseResult.BestFitness:F4})");
-        Console.WriteLine($"  {(distillBetter ? "蒸馏模型更优, 使用蒸馏模型" : "基础模型更优, 保留基础模型")}");
+        _log($"  蒸馏后 fitness={fitness:F4} (基础={baseResult.BestFitness:F4})");
+        _log($"  {(distillBetter ? "蒸馏模型更优, 使用蒸馏模型" : "基础模型更优, 保留基础模型")}");
 
         return new MLNetTrainResult
         {
@@ -385,10 +400,10 @@ public class MLNetDistillationTrainer
 
             processedCount++;
             if (processedCount % 100 == 0)
-                Console.WriteLine($"  soft targets: {processedCount} 张图像已处理");
+                _log($"  soft targets: {processedCount} 张图像已处理");
         }
 
-        Console.WriteLine($"  soft targets 生成完成: {processedCount} 张图像");
+        _log($"  soft targets 生成完成: {processedCount} 张图像");
 
         // 用路径 + LoadImages 创建延迟加载的 IDataView
         var pathData = _mlContext.Data.LoadFromEnumerable(softItems);
