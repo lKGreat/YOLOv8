@@ -12,6 +12,7 @@ public partial class MainForm : AntdUI.Window
 {
     private AnnotationPanel? annotationPanel;
     private TrainingPanel? trainingPanel;
+    private MLNetTrainingPanel? mlnetTrainingPanel;
     private ExportPanel? exportPanel;
     private InferencePanel? inferencePanel;
     private ModelTestPanel? modelTestPanel;
@@ -37,6 +38,12 @@ public partial class MainForm : AntdUI.Window
         trainingPanel.Dock = DockStyle.Fill;
         trainingPanel.StatusChanged += (s, msg) => SetStatus(msg);
         tabTraining.Controls.Add(trainingPanel);
+
+        // ML.NET Training Panel
+        mlnetTrainingPanel = new MLNetTrainingPanel();
+        mlnetTrainingPanel.Dock = DockStyle.Fill;
+        mlnetTrainingPanel.StatusChanged += (s, msg) => SetStatus(msg);
+        tabMLNetTraining.Controls.Add(mlnetTrainingPanel);
 
         // Export Panel
         exportPanel = new ExportPanel();
@@ -97,6 +104,7 @@ public partial class MainForm : AntdUI.Window
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         trainingPanel?.StopTraining();
+        mlnetTrainingPanel?.StopTraining();
         base.OnFormClosing(e);
     }
 

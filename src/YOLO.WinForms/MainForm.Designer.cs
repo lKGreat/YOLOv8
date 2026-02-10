@@ -23,6 +23,7 @@ partial class MainForm
         this.tabExport = new AntdUI.TabPage();
         this.tabInference = new AntdUI.TabPage();
         this.tabModelTest = new AntdUI.TabPage();
+        this.tabMLNetTraining = new AntdUI.TabPage();
         this.panelStatus = new System.Windows.Forms.Panel();
         this.lblStatus = new AntdUI.Label();
         this.lblDevice = new AntdUI.Label();
@@ -56,8 +57,12 @@ partial class MainForm
         this.tabModelTest.Text = "Model Test";
         this.tabModelTest.Padding = new Padding(4);
 
+        this.tabMLNetTraining.Text = "ML.NET Training";
+        this.tabMLNetTraining.Padding = new Padding(4);
+
         this.tabs.Pages.Add(this.tabAnnotation);
         this.tabs.Pages.Add(this.tabTraining);
+        this.tabs.Pages.Add(this.tabMLNetTraining);
         this.tabs.Pages.Add(this.tabExport);
         this.tabs.Pages.Add(this.tabInference);
         this.tabs.Pages.Add(this.tabModelTest);
@@ -108,6 +113,7 @@ partial class MainForm
     private AntdUI.TabPage tabExport;
     private AntdUI.TabPage tabInference;
     private AntdUI.TabPage tabModelTest;
+    private AntdUI.TabPage tabMLNetTraining;
     private System.Windows.Forms.Panel panelStatus;
     private AntdUI.Label lblStatus;
     private AntdUI.Label lblDevice;

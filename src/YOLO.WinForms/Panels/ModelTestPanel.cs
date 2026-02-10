@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using YOLO.Core.Abstractions;
+using YOLO.MLNet.Inference;
 using YOLO.Runtime;
 using YOLO.Runtime.Results;
 
@@ -15,6 +16,8 @@ public partial class ModelTestPanel : UserControl
 {
     // ── State ────────────────────────────────────────────────
     private YoloInfer? _yoloInfer;
+    private MLNetDetector? _mlnetDetector;
+    private bool _isMLNetModel;
     private string? _currentModelPath;
     private string[]? _classNames;
     private bool _modelLoaded;
@@ -183,8 +186,9 @@ public partial class ModelTestPanel : UserControl
     {
         string ext = Path.GetExtension(txtModelFile.Text ?? "").ToLowerInvariant();
         bool isPt = ext is ".pt" or ".bin";
+        bool isZip = ext is ".zip";
 
-        // Show version/variant/nc rows only for .pt models
+        // Show version/variant/nc rows only for .pt models (not for .onnx or .zip)
         lblVersion.Visible = isPt;
         cboVersion.Visible = isPt;
         lblVariant.Visible = isPt;
@@ -398,7 +402,7 @@ public partial class ModelTestPanel : UserControl
     {
         using var dlg = new OpenFileDialog
         {
-            Filter = "YOLO Models|*.pt;*.onnx;*.bin|ONNX Models|*.onnx|PyTorch Weights|*.pt;*.bin|All Files|*.*",
+            Filter = "All Models|*.pt;*.onnx;*.bin;*.zip|YOLO Models|*.pt;*.onnx;*.bin|ML.NET Models|*.zip|All Files|*.*",
             Title = "Select Model File"
         };
         if (dlg.ShowDialog() == DialogResult.OK)
@@ -434,6 +438,9 @@ public partial class ModelTestPanel : UserControl
             // Dispose previous
             _yoloInfer?.Dispose();
             _yoloInfer = null;
+            _mlnetDetector?.Dispose();
+            _mlnetDetector = null;
+            _isMLNetModel = false;
             _modelLoaded = false;
 
             // Load class names if specified
@@ -441,13 +448,26 @@ public partial class ModelTestPanel : UserControl
 
             string ext = Path.GetExtension(modelPath).ToLowerInvariant();
             bool isPt = ext is ".pt" or ".bin";
+            bool isZip = ext is ".zip";
 
-            // Build options
-            var options = BuildYoloOptions(isPt);
-            options.ClassNames = _classNames;
+            if (isZip)
+            {
+                // ML.NET model (.zip)
+                // Try to auto-load class names from args.yaml near the model
+                if (_classNames == null)
+                    _classNames = MLNetDetector.TryLoadClassNames(modelPath);
 
-            // Create inference engine
-            _yoloInfer = new YoloInfer(modelPath, options);
+                _mlnetDetector = new MLNetDetector(modelPath, _classNames);
+                _isMLNetModel = true;
+            }
+            else
+            {
+                // YOLO model (.pt / .onnx / .bin)
+                var options = BuildYoloOptions(isPt);
+                options.ClassNames = _classNames;
+                _yoloInfer = new YoloInfer(modelPath, options);
+            }
+
             _currentModelPath = modelPath;
             _modelLoaded = true;
 
@@ -457,8 +477,8 @@ public partial class ModelTestPanel : UserControl
             btnRedetect.Enabled = false; // no image yet
 
             string modelName = Path.GetFileName(modelPath);
-            string providerText = GetSelectedText(cboProvider) ?? "Auto";
-            lblModelInfo.Text = $"{modelName} | {providerText} | {options.ImgSize}px";
+            string modelType = isZip ? "ML.NET AutoFormerV2" : (GetSelectedText(cboProvider) ?? "Auto");
+            lblModelInfo.Text = $"{modelName} | {modelType}";
 
             StatusChanged?.Invoke(this, $"Model loaded: {modelName}");
             ShowMessage($"Model loaded: {modelName}", AntdUI.TType.Success);
@@ -639,7 +659,7 @@ public partial class ModelTestPanel : UserControl
 
     private async Task RunInferenceAsync(string imagePath)
     {
-        if (_yoloInfer == null) return;
+        if (_yoloInfer == null && _mlnetDetector == null) return;
 
         try
         {
@@ -653,7 +673,16 @@ public partial class ModelTestPanel : UserControl
 
             // Run inference with timing
             var sw = Stopwatch.StartNew();
-            var detections = await Task.Run(() => _yoloInfer.Detect(imagePath));
+            DetectionResult[] detections;
+            if (_isMLNetModel && _mlnetDetector != null)
+            {
+                float confThresh = sliderConf.Value / 100f;
+                detections = await Task.Run(() => _mlnetDetector.Detect(imagePath, confThresh));
+            }
+            else
+            {
+                detections = await Task.Run(() => _yoloInfer!.Detect(imagePath));
+            }
             sw.Stop();
             _lastInferenceMs = sw.Elapsed.TotalMilliseconds;
 
@@ -697,13 +726,21 @@ public partial class ModelTestPanel : UserControl
         {
             string modelPath = _currentModelPath!;
             string ext = Path.GetExtension(modelPath).ToLowerInvariant();
-            bool isPt = ext is ".pt" or ".bin";
 
-            var options = BuildYoloOptions(isPt);
-            options.ClassNames = _classNames;
+            if (ext is ".zip")
+            {
+                // ML.NET model: just re-run with current params
+                // (no need to rebuild, threshold is passed per-call)
+            }
+            else
+            {
+                bool isPt = ext is ".pt" or ".bin";
+                var options = BuildYoloOptions(isPt);
+                options.ClassNames = _classNames;
 
-            _yoloInfer?.Dispose();
-            _yoloInfer = new YoloInfer(modelPath, options);
+                _yoloInfer?.Dispose();
+                _yoloInfer = new YoloInfer(modelPath, options);
+            }
 
             await RunInferenceAsync(_batchFiles[_currentIndex]);
         }
@@ -1124,6 +1161,8 @@ public partial class ModelTestPanel : UserControl
         {
             _yoloInfer?.Dispose();
             _yoloInfer = null;
+            _mlnetDetector?.Dispose();
+            _mlnetDetector = null;
             _originalImage?.Dispose();
             _originalImage = null;
             _resultImage?.Dispose();

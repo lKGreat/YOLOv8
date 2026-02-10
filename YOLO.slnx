@@ -7,6 +7,7 @@
     <Project Path="src/YOLO.Export/YOLO.Export.csproj" />
     <Project Path="src/YOLO.App/YOLO.App.csproj" />
     <Project Path="src/YOLO.Runtime/YOLO.Runtime.csproj" />
+    <Project Path="src/YOLO.MLNet/YOLO.MLNet.csproj" />
     <Project Path="src/YOLO.WinForms/YOLO.WinForms.csproj" />
   </Folder>
   <Folder Name="/tests/">

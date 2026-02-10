@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML" Version="4.*" />
+    <PackageReference Include="Microsoft.ML.TorchSharp" Version="0.22.*" />
+    <PackageReference Include="Microsoft.ML.ImageAnalytics" Version="4.*" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\YOLO.Core\YOLO.Core.csproj" />
+    <ProjectReference Include="..\YOLO.Data\YOLO.Data.csproj" />
+    <ProjectReference Include="..\YOLO.Runtime\YOLO.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>
