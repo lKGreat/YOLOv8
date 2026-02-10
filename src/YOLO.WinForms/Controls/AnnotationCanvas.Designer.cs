@@ -6,9 +6,9 @@ partial class AnnotationCanvas
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing && (components != null))
+        if (disposing)
         {
-            components.Dispose();
+            components?.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -18,10 +18,10 @@ partial class AnnotationCanvas
     private void InitializeComponent()
     {
         this.components = new System.ComponentModel.Container();
-        this.drawPanel = new Panel();
+        this.drawPanel = new DoubleBufferedPanel();
         this.SuspendLayout();
 
-        // drawPanel
+        // drawPanel — uses DoubleBufferedPanel for flicker-free rendering
         this.drawPanel.Dock = DockStyle.Fill;
         this.drawPanel.BackColor = Color.FromArgb(30, 30, 30);
         this.drawPanel.Location = new Point(0, 0);
@@ -33,7 +33,6 @@ partial class AnnotationCanvas
         this.drawPanel.MouseMove += DrawPanel_MouseMove;
         this.drawPanel.MouseUp += DrawPanel_MouseUp;
         this.drawPanel.MouseWheel += DrawPanel_MouseWheel;
-        this.drawPanel.Resize += (s, e) => drawPanel.Invalidate();
 
         // AnnotationCanvas
         this.AutoScaleDimensions = new SizeF(7F, 15F);
@@ -46,5 +45,5 @@ partial class AnnotationCanvas
 
     #endregion
 
-    private Panel drawPanel;
+    private DoubleBufferedPanel drawPanel;
 }

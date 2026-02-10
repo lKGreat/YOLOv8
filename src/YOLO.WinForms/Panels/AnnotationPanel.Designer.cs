@@ -84,11 +84,6 @@ partial class AnnotationPanel
         this.lblStatus = new AntdUI.Label();
 
         // ────────────────────────────────────────────────────────
-        // NOTE: Do NOT use BeginInit/EndInit on SplitContainers here.
-        // EndInit validates MinSize / SplitterDistance against the current
-        // Width, which is still default (~150) at this point and causes
-        // InvalidOperationException. Size-related properties are deferred
-        // to the Load handler instead.
         this.splitMain.SuspendLayout();
         this.splitRight.SuspendLayout();
         ((System.ComponentModel.ISupportInitialize)this.dgvAnnotations).BeginInit();
@@ -100,17 +95,15 @@ partial class AnnotationPanel
         this.splitMain.Dock = DockStyle.Fill;
         this.splitMain.FixedPanel = FixedPanel.Panel1;
         this.splitMain.Name = "splitMain";
-        // MinSize values are set in the deferred Load handler to avoid
-        // InvalidOperationException when the control width is still default.
 
         this.splitRight.Dock = DockStyle.Fill;
         this.splitRight.FixedPanel = FixedPanel.Panel2;
         this.splitRight.Name = "splitRight";
-
         this.splitMain.Panel2.Controls.Add(this.splitRight);
 
         // ═══════════════════════════════════════════════════════
-        // LEFT SIDEBAR
+        // LEFT SIDEBAR — use a scrollable container so nothing
+        // gets clipped when the sidebar is narrow / short.
         // ═══════════════════════════════════════════════════════
 
         // -- Project section --
@@ -123,18 +116,18 @@ partial class AnnotationPanel
         this.panelProjectButtons.AutoSize = true;
         this.panelProjectButtons.Dock = DockStyle.Top;
         this.panelProjectButtons.FlowDirection = FlowDirection.LeftToRight;
-        this.panelProjectButtons.Padding = new Padding(4, 2, 4, 6);
         this.panelProjectButtons.WrapContents = true;
+        this.panelProjectButtons.Padding = new Padding(4, 2, 4, 6);
 
         this.btnNewProject.Text = "New";
         this.btnNewProject.Type = AntdUI.TTypeMini.Primary;
-        this.btnNewProject.Size = new Size(58, 32);
+        this.btnNewProject.Size = new Size(50, 30);
 
         this.btnOpenProject.Text = "Open";
-        this.btnOpenProject.Size = new Size(58, 32);
+        this.btnOpenProject.Size = new Size(52, 30);
 
         this.btnSaveProject.Text = "Save";
-        this.btnSaveProject.Size = new Size(58, 32);
+        this.btnSaveProject.Size = new Size(50, 30);
 
         this.panelProjectButtons.Controls.Add(this.btnNewProject);
         this.panelProjectButtons.Controls.Add(this.btnOpenProject);
@@ -156,32 +149,33 @@ partial class AnnotationPanel
         this.panelClassButtons.AutoSize = true;
         this.panelClassButtons.Dock = DockStyle.Bottom;
         this.panelClassButtons.FlowDirection = FlowDirection.LeftToRight;
+        this.panelClassButtons.WrapContents = true;
         this.panelClassButtons.Padding = new Padding(4, 2, 4, 2);
 
         this.btnAddClass.Text = "Add";
         this.btnAddClass.Type = AntdUI.TTypeMini.Primary;
         this.btnAddClass.Ghost = true;
-        this.btnAddClass.Size = new Size(70, 30);
+        this.btnAddClass.Size = new Size(52, 28);
 
         this.btnRemoveClass.Text = "Remove";
         this.btnRemoveClass.Type = AntdUI.TTypeMini.Error;
         this.btnRemoveClass.Ghost = true;
-        this.btnRemoveClass.Size = new Size(78, 30);
+        this.btnRemoveClass.Size = new Size(68, 28);
 
         this.panelClassButtons.Controls.Add(this.btnAddClass);
         this.panelClassButtons.Controls.Add(this.btnRemoveClass);
 
         // -- Draw class selector --
-        this.lblCurrentClass.Text = "Draw class:";
+        this.lblCurrentClass.Text = "Draw:";
         this.lblCurrentClass.AutoSize = true;
         this.lblCurrentClass.Dock = DockStyle.Left;
         this.lblCurrentClass.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblCurrentClass.Padding = new Padding(6, 0, 0, 0);
+        this.lblCurrentClass.Padding = new Padding(4, 0, 0, 0);
         this.lblCurrentClass.Font = new Font("Segoe UI", 9F);
 
         this.cboCurrentClass.Dock = DockStyle.Fill;
 
-        var panelCurrentClass = new System.Windows.Forms.Panel();
+        var panelCurrentClass = new Panel();
         panelCurrentClass.Dock = DockStyle.Bottom;
         panelCurrentClass.Height = 36;
         panelCurrentClass.Padding = new Padding(4, 2, 4, 4);
@@ -189,7 +183,7 @@ partial class AnnotationPanel
         panelCurrentClass.Controls.Add(this.lblCurrentClass);
 
         // -- Assemble left sidebar --
-        var panelClassesContent = new System.Windows.Forms.Panel();
+        var panelClassesContent = new Panel();
         panelClassesContent.Dock = DockStyle.Fill;
         panelClassesContent.Controls.Add(this.lstClasses);
         panelClassesContent.Controls.Add(this.panelClassButtons);
@@ -205,77 +199,90 @@ partial class AnnotationPanel
         // ═══════════════════════════════════════════════════════
 
         // -- Toolbar --
+        // Key responsive properties: WrapContents = true, AutoSize = true
+        // so buttons wrap to a second row when the panel is narrow.
         this.toolbarPanel.Dock = DockStyle.Top;
-        this.toolbarPanel.Height = 40;
+        this.toolbarPanel.AutoSize = true;
+        this.toolbarPanel.MinimumSize = new Size(0, 36);
         this.toolbarPanel.FlowDirection = FlowDirection.LeftToRight;
-        this.toolbarPanel.WrapContents = false;
-        this.toolbarPanel.Padding = new Padding(4, 4, 4, 0);
-        this.toolbarPanel.BackColor = Color.FromArgb(250, 250, 250);
+        this.toolbarPanel.WrapContents = true;
+        this.toolbarPanel.Padding = new Padding(2, 2, 2, 0);
+        this.toolbarPanel.BackColor = Color.FromArgb(248, 249, 250);
 
-        this.tsbSelect.Text = "Select (V)";
+        this.tsbSelect.Text = "Select";
         this.tsbSelect.Ghost = true;
-        this.tsbSelect.Size = new Size(82, 32);
+        this.tsbSelect.Size = new Size(56, 30);
+        // tooltip: "Select mode (V)"
 
-        this.tsbDrawRect.Text = "Draw (R)";
+        this.tsbDrawRect.Text = "Draw";
         this.tsbDrawRect.Type = AntdUI.TTypeMini.Primary;
-        this.tsbDrawRect.Size = new Size(76, 32);
+        this.tsbDrawRect.Size = new Size(52, 30);
+        // tooltip: "Draw rect (R)"
 
         this.toolSep1.Vertical = true;
-        this.toolSep1.Size = new Size(12, 32);
+        this.toolSep1.Size = new Size(8, 30);
 
         this.tsbZoomIn.Text = "+";
         this.tsbZoomIn.Ghost = true;
         this.tsbZoomIn.Shape = AntdUI.TShape.Circle;
-        this.tsbZoomIn.Size = new Size(32, 32);
+        this.tsbZoomIn.Size = new Size(30, 30);
+        // tooltip: "Zoom in (+)"
 
-        this.tsbZoomOut.Text = "-";
+        this.tsbZoomOut.Text = "−";
         this.tsbZoomOut.Ghost = true;
         this.tsbZoomOut.Shape = AntdUI.TShape.Circle;
-        this.tsbZoomOut.Size = new Size(32, 32);
+        this.tsbZoomOut.Size = new Size(30, 30);
+        // tooltip: "Zoom out (-)"
 
         this.tsbFit.Text = "Fit";
         this.tsbFit.Ghost = true;
-        this.tsbFit.Size = new Size(42, 32);
+        this.tsbFit.Size = new Size(36, 30);
+        // tooltip: "Fit to window (Ctrl+0)"
 
         this.tslZoom.Text = "100%";
         this.tslZoom.AutoSize = true;
         this.tslZoom.TextAlign = ContentAlignment.MiddleCenter;
-        this.tslZoom.Padding = new Padding(2, 8, 2, 0);
+        this.tslZoom.Padding = new Padding(0, 6, 2, 0);
         this.tslZoom.Font = new Font("Segoe UI", 8.5F);
         this.tslZoom.ForeColor = Color.FromArgb(120, 120, 120);
 
         this.toolSep2.Vertical = true;
-        this.toolSep2.Size = new Size(12, 32);
+        this.toolSep2.Size = new Size(8, 30);
 
-        this.tsbUndo.Text = "Undo";
+        this.tsbUndo.Text = "↶";
         this.tsbUndo.Ghost = true;
-        this.tsbUndo.Size = new Size(52, 32);
+        this.tsbUndo.Size = new Size(30, 30);
+        // tooltip: "Undo (Ctrl+Z)"
 
-        this.tsbRedo.Text = "Redo";
+        this.tsbRedo.Text = "↷";
         this.tsbRedo.Ghost = true;
-        this.tsbRedo.Size = new Size(52, 32);
+        this.tsbRedo.Size = new Size(30, 30);
+        // tooltip: "Redo (Ctrl+Y)"
 
         this.toolSep3.Vertical = true;
-        this.toolSep3.Size = new Size(12, 32);
+        this.toolSep3.Size = new Size(8, 30);
 
-        this.tsbPrevImage.Text = "<<";
+        this.tsbPrevImage.Text = "◀";
         this.tsbPrevImage.Ghost = true;
-        this.tsbPrevImage.Size = new Size(36, 32);
+        this.tsbPrevImage.Size = new Size(30, 30);
+        // tooltip: "Previous image (←)"
 
         this.tslImageIndex.Text = "0 / 0";
         this.tslImageIndex.AutoSize = true;
         this.tslImageIndex.TextAlign = ContentAlignment.MiddleCenter;
-        this.tslImageIndex.Padding = new Padding(2, 8, 2, 0);
+        this.tslImageIndex.Padding = new Padding(0, 6, 0, 0);
         this.tslImageIndex.Font = new Font("Segoe UI", 9F);
 
-        this.tsbNextImage.Text = ">>";
+        this.tsbNextImage.Text = "▶";
         this.tsbNextImage.Ghost = true;
-        this.tsbNextImage.Size = new Size(36, 32);
+        this.tsbNextImage.Size = new Size(30, 30);
+        // tooltip: "Next image (→)"
 
-        this.tsbMarkComplete.Text = "Mark Done";
+        this.tsbMarkComplete.Text = "✓ Done";
         this.tsbMarkComplete.Type = AntdUI.TTypeMini.Success;
         this.tsbMarkComplete.Ghost = true;
-        this.tsbMarkComplete.Size = new Size(90, 32);
+        this.tsbMarkComplete.Size = new Size(66, 30);
+        // tooltip: "Mark complete & next (Enter)"
 
         this.toolbarPanel.Controls.AddRange(new Control[]
         {
@@ -297,11 +304,11 @@ partial class AnnotationPanel
 
         // -- Status --
         this.lblStatus.Dock = DockStyle.Bottom;
-        this.lblStatus.Height = 26;
+        this.lblStatus.Height = 24;
         this.lblStatus.TextAlign = ContentAlignment.MiddleLeft;
-        this.lblStatus.Font = new Font("Segoe UI", 9F);
+        this.lblStatus.Font = new Font("Segoe UI", 8.5F);
         this.lblStatus.Text = "No project loaded";
-        this.lblStatus.Padding = new Padding(8, 0, 0, 0);
+        this.lblStatus.Padding = new Padding(6, 0, 0, 0);
         this.lblStatus.BackColor = Color.FromArgb(248, 248, 248);
         this.lblStatus.ForeColor = Color.FromArgb(100, 100, 100);
 
@@ -312,32 +319,47 @@ partial class AnnotationPanel
 
         // ═══════════════════════════════════════════════════════
         // RIGHT SIDEBAR (splitRight.Panel2)
+        // Use a TableLayoutPanel with percentage-based rows so
+        // all three sections (images, annotations, dataset)
+        // scale proportionally and nothing gets hidden.
         // ═══════════════════════════════════════════════════════
 
-        // -- Images section --
+        var rightLayout = new TableLayoutPanel();
+        rightLayout.Dock = DockStyle.Fill;
+        rightLayout.ColumnCount = 1;
+        rightLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        rightLayout.RowCount = 3;
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 45F));  // Images
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 30F));  // Annotations
+        rightLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));  // Dataset
+        rightLayout.Margin = Padding.Empty;
+        rightLayout.Padding = Padding.Empty;
+
+        // ── Images section ──────────────────────────────────────
         this.panelImagesHeader.Text = "Images";
         this.panelImagesHeader.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         this.panelImagesHeader.Dock = DockStyle.Top;
-        this.panelImagesHeader.Height = 28;
-        this.panelImagesHeader.Padding = new Padding(6, 6, 0, 0);
+        this.panelImagesHeader.Height = 26;
+        this.panelImagesHeader.Padding = new Padding(6, 4, 0, 0);
 
         this.panelImgFilter.AutoSize = true;
         this.panelImgFilter.Dock = DockStyle.Top;
         this.panelImgFilter.FlowDirection = FlowDirection.LeftToRight;
         this.panelImgFilter.WrapContents = true;
-        this.panelImgFilter.Padding = new Padding(4, 0, 4, 4);
+        this.panelImgFilter.Padding = new Padding(2, 0, 2, 2);
 
-        this.cboImageFilter.Size = new Size(98, 30);
+        this.cboImageFilter.Size = new Size(90, 28);
         this.cboImageFilter.Items.AddRange(new object[] { "All", "Completed", "Incomplete" });
         this.cboImageFilter.SelectedIndex = 0;
 
-        this.btnImportImages.Text = "Images";
+        this.btnImportImages.Text = "Import";
         this.btnImportImages.Ghost = true;
-        this.btnImportImages.Size = new Size(68, 30);
+        this.btnImportImages.Size = new Size(56, 28);
+        // tooltip: "Import images (Ctrl+I)"
 
         this.btnImportPdf.Text = "PDF";
         this.btnImportPdf.Ghost = true;
-        this.btnImportPdf.Size = new Size(48, 30);
+        this.btnImportPdf.Size = new Size(42, 28);
 
         this.panelImgFilter.Controls.Add(this.cboImageFilter);
         this.panelImgFilter.Controls.Add(this.btnImportImages);
@@ -352,18 +374,18 @@ partial class AnnotationPanel
         this.lstImages.BorderStyle = BorderStyle.None;
         this.lstImages.BackColor = Color.FromArgb(250, 250, 250);
 
-        var panelImagesList = new System.Windows.Forms.Panel();
+        var panelImagesList = new Panel();
         panelImagesList.Dock = DockStyle.Fill;
         panelImagesList.Controls.Add(this.lstImages);
         panelImagesList.Controls.Add(this.panelImgFilter);
         panelImagesList.Controls.Add(this.panelImagesHeader);
 
-        // -- Annotations section --
+        // ── Annotations section ─────────────────────────────────
         this.panelAnnotationsHeader.Text = "Annotations";
         this.panelAnnotationsHeader.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         this.panelAnnotationsHeader.Dock = DockStyle.Top;
-        this.panelAnnotationsHeader.Height = 28;
-        this.panelAnnotationsHeader.Padding = new Padding(6, 6, 0, 0);
+        this.panelAnnotationsHeader.Height = 26;
+        this.panelAnnotationsHeader.Padding = new Padding(6, 4, 0, 0);
 
         this.dgvAnnotations.Dock = DockStyle.Fill;
         this.dgvAnnotations.AllowUserToAddRows = false;
@@ -375,9 +397,11 @@ partial class AnnotationPanel
         this.dgvAnnotations.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         this.dgvAnnotations.BackgroundColor = Color.FromArgb(250, 250, 250);
         this.dgvAnnotations.BorderStyle = BorderStyle.None;
-        this.dgvAnnotations.Font = new Font("Segoe UI", 9F);
+        this.dgvAnnotations.Font = new Font("Segoe UI", 8.5F);
         this.dgvAnnotations.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 245, 245);
         this.dgvAnnotations.EnableHeadersVisualStyles = false;
+        this.dgvAnnotations.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+        this.dgvAnnotations.RowTemplate.Height = 22;
         this.dgvAnnotations.ColumnCount = 3;
         this.dgvAnnotations.Columns[0].Name = "Class";
         this.dgvAnnotations.Columns[0].FillWeight = 35;
@@ -387,80 +411,81 @@ partial class AnnotationPanel
         this.dgvAnnotations.Columns[2].FillWeight = 15;
 
         this.btnDeleteAnnotation.Dock = DockStyle.Bottom;
-        this.btnDeleteAnnotation.Height = 32;
-        this.btnDeleteAnnotation.Text = "Delete Selected (Del)";
+        this.btnDeleteAnnotation.Height = 28;
+        this.btnDeleteAnnotation.Text = "Delete (Del)";
         this.btnDeleteAnnotation.Type = AntdUI.TTypeMini.Error;
         this.btnDeleteAnnotation.Ghost = true;
 
-        var panelAnnotations = new System.Windows.Forms.Panel();
-        panelAnnotations.Dock = DockStyle.Bottom;
-        panelAnnotations.Height = 200;
+        var panelAnnotations = new Panel();
+        panelAnnotations.Dock = DockStyle.Fill;
         panelAnnotations.Controls.Add(this.dgvAnnotations);
         panelAnnotations.Controls.Add(this.btnDeleteAnnotation);
         panelAnnotations.Controls.Add(this.panelAnnotationsHeader);
 
-        // -- Dataset section --
+        // ── Dataset section ─────────────────────────────────────
         this.panelDatasetHeader.Text = "Dataset";
         this.panelDatasetHeader.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         this.panelDatasetHeader.Dock = DockStyle.Top;
-        this.panelDatasetHeader.Height = 28;
-        this.panelDatasetHeader.Padding = new Padding(6, 6, 0, 0);
+        this.panelDatasetHeader.Height = 26;
+        this.panelDatasetHeader.Padding = new Padding(6, 4, 0, 0);
 
-        this.lblSplitRatio.Text = "Train / Val Split:";
+        this.lblSplitRatio.Text = "Train / Val:";
         this.lblSplitRatio.AutoSize = true;
         this.lblSplitRatio.Dock = DockStyle.Top;
         this.lblSplitRatio.Padding = new Padding(6, 2, 0, 0);
-        this.lblSplitRatio.Font = new Font("Segoe UI", 9F);
+        this.lblSplitRatio.Font = new Font("Segoe UI", 8.5F);
 
         this.trkSplitRatio.Dock = DockStyle.Top;
         this.trkSplitRatio.MinValue = 50;
         this.trkSplitRatio.MaxValue = 95;
         this.trkSplitRatio.Value = 80;
-        this.trkSplitRatio.Height = 30;
+        this.trkSplitRatio.Height = 26;
 
         this.lblSplitValue.Text = "80% / 20%";
         this.lblSplitValue.AutoSize = true;
         this.lblSplitValue.Dock = DockStyle.Top;
         this.lblSplitValue.TextAlign = ContentAlignment.MiddleCenter;
-        this.lblSplitValue.Padding = new Padding(6, 0, 0, 2);
-        this.lblSplitValue.Font = new Font("Segoe UI", 9F);
+        this.lblSplitValue.Padding = new Padding(6, 0, 0, 0);
+        this.lblSplitValue.Font = new Font("Segoe UI", 8.5F);
         this.lblSplitValue.ForeColor = Color.FromArgb(100, 100, 100);
 
         this.panelDatasetButtons.AutoSize = true;
         this.panelDatasetButtons.Dock = DockStyle.Top;
         this.panelDatasetButtons.FlowDirection = FlowDirection.LeftToRight;
         this.panelDatasetButtons.WrapContents = true;
-        this.panelDatasetButtons.Padding = new Padding(4, 2, 4, 4);
+        this.panelDatasetButtons.Padding = new Padding(2, 2, 2, 2);
 
         this.btnGenerateDataset.Text = "Generate";
-        this.btnGenerateDataset.Size = new Size(85, 32);
+        this.btnGenerateDataset.Size = new Size(72, 28);
 
-        this.btnGenerateAndTrain.Text = "Generate & Train";
+        this.btnGenerateAndTrain.Text = "Gen+Train";
         this.btnGenerateAndTrain.Type = AntdUI.TTypeMini.Primary;
-        this.btnGenerateAndTrain.Size = new Size(124, 32);
+        this.btnGenerateAndTrain.Size = new Size(78, 28);
+        // tooltip: "Generate dataset and start training"
 
-        this.btnEditConfig.Text = "Config";
+        this.btnEditConfig.Text = "Cfg";
         this.btnEditConfig.Ghost = true;
-        this.btnEditConfig.Size = new Size(66, 32);
+        this.btnEditConfig.Size = new Size(40, 28);
+        // tooltip: "Edit dataset YAML config"
 
         this.panelDatasetButtons.Controls.Add(this.btnGenerateDataset);
         this.panelDatasetButtons.Controls.Add(this.btnGenerateAndTrain);
         this.panelDatasetButtons.Controls.Add(this.btnEditConfig);
 
-        var panelDataset = new System.Windows.Forms.Panel();
-        panelDataset.Dock = DockStyle.Bottom;
-        panelDataset.Height = 160;
-        // Add in reverse dock order
+        var panelDataset = new Panel();
+        panelDataset.Dock = DockStyle.Fill;
+        // Add in reverse dock order (Top items last → rendered first)
         panelDataset.Controls.Add(this.panelDatasetButtons);
         panelDataset.Controls.Add(this.lblSplitValue);
         panelDataset.Controls.Add(this.trkSplitRatio);
         panelDataset.Controls.Add(this.lblSplitRatio);
         panelDataset.Controls.Add(this.panelDatasetHeader);
 
-        // Assemble right panel
-        this.splitRight.Panel2.Controls.Add(panelImagesList);
-        this.splitRight.Panel2.Controls.Add(panelAnnotations);
-        this.splitRight.Panel2.Controls.Add(panelDataset);
+        // Assemble right panel with proportional layout
+        rightLayout.Controls.Add(panelImagesList, 0, 0);
+        rightLayout.Controls.Add(panelAnnotations, 0, 1);
+        rightLayout.Controls.Add(panelDataset, 0, 2);
+        this.splitRight.Panel2.Controls.Add(rightLayout);
 
         // ═══════════════════════════════════════════════════════
         // AnnotationPanel
@@ -484,14 +509,14 @@ partial class AnnotationPanel
             {
                 try
                 {
-                    this.splitMain.Panel1MinSize = 160;
+                    this.splitMain.Panel1MinSize = 140;
                     this.splitMain.Panel2MinSize = 200;
                     if (this.splitMain.Width > 400)
-                        this.splitMain.SplitterDistance = 200;
+                        this.splitMain.SplitterDistance = 180;
 
                     this.splitRight.Panel1MinSize = 200;
-                    this.splitRight.Panel2MinSize = 220;
-                    int rightAvail = this.splitRight.Width - 220 - this.splitRight.SplitterWidth;
+                    this.splitRight.Panel2MinSize = 200;
+                    int rightAvail = this.splitRight.Width - 240 - this.splitRight.SplitterWidth;
                     if (rightAvail > 200)
                         this.splitRight.SplitterDistance = rightAvail;
                 }

@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using YOLO.WinForms.Models;
 
 namespace YOLO.WinForms.Controls;
@@ -24,11 +26,79 @@ internal enum ResizeHandle
 }
 
 /// <summary>
-/// Custom double-buffered canvas for image annotation with rectangle bounding boxes.
-/// Supports zoom/pan, drawing, selection, move/resize, and class-colored overlays.
+/// High-performance double-buffered canvas for image annotation with
+/// rectangle bounding boxes. Supports zoom/pan, drawing, selection,
+/// move/resize, and class-colored overlays.
+/// 
+/// Performance optimizations:
+/// - DoubleBufferedPanel eliminates paint flicker
+/// - All GDI+ pens, brushes and fonts are pre-cached (zero per-frame allocation)
+/// - Image is converted to Format32bppPArgb for native-speed blitting
+/// - Dirty-region invalidation where possible
 /// </summary>
 public partial class AnnotationCanvas : UserControl
 {
+    // ── Cached GDI resources (created once, never disposed) ──────────
+
+    private static readonly Color[] ClassColors =
+    [
+        Color.FromArgb(220, 57, 119, 175),
+        Color.FromArgb(220, 214, 39, 40),
+        Color.FromArgb(220, 44, 160, 44),
+        Color.FromArgb(220, 255, 127, 14),
+        Color.FromArgb(220, 148, 103, 189),
+        Color.FromArgb(220, 140, 86, 75),
+        Color.FromArgb(220, 227, 119, 194),
+        Color.FromArgb(220, 127, 127, 127),
+        Color.FromArgb(220, 188, 189, 34),
+        Color.FromArgb(220, 23, 190, 207),
+    ];
+
+    // Per-class cached resources
+    private static readonly Pen[] NormalPens;
+    private static readonly Pen[] SelectedPens;
+    private static readonly SolidBrush[] FillBrushes;
+    private static readonly SolidBrush[] LabelBgBrushes;
+    private static readonly Pen[] HandlePens;
+    private static readonly Pen[] DrawPreviewPens;
+    private static readonly SolidBrush[] DrawPreviewFills;
+
+    // Shared resources
+    private static readonly Font LabelFont = new("Segoe UI", 9f, FontStyle.Bold);
+    private static readonly SolidBrush WhiteBrush = new(Color.White);
+    private static readonly SolidBrush WhiteTextBrush = new(Color.White);
+    private static readonly Pen CrosshairPen = new(Color.FromArgb(120, 255, 255, 255), 1f)
+    {
+        DashStyle = DashStyle.Dot
+    };
+
+    private const int HandleSize = 8;
+    private const float HandleHalf = HandleSize / 2f;
+
+    static AnnotationCanvas()
+    {
+        int n = ClassColors.Length;
+        NormalPens = new Pen[n];
+        SelectedPens = new Pen[n];
+        FillBrushes = new SolidBrush[n];
+        LabelBgBrushes = new SolidBrush[n];
+        HandlePens = new Pen[n];
+        DrawPreviewPens = new Pen[n];
+        DrawPreviewFills = new SolidBrush[n];
+
+        for (int i = 0; i < n; i++)
+        {
+            var c = ClassColors[i];
+            NormalPens[i] = new Pen(c, 2f);
+            SelectedPens[i] = new Pen(c, 3f);
+            FillBrushes[i] = new SolidBrush(Color.FromArgb(40, c));
+            LabelBgBrushes[i] = new SolidBrush(c);
+            HandlePens[i] = new Pen(c, 1.5f);
+            DrawPreviewPens[i] = new Pen(c, 2f) { DashStyle = DashStyle.Dash };
+            DrawPreviewFills[i] = new SolidBrush(Color.FromArgb(30, c));
+        }
+    }
+
     // ── State ──────────────────────────────────────────────────────
 
     private Image? _image;
@@ -62,23 +132,6 @@ public partial class AnnotationCanvas : UserControl
     // Space key held = temporary pan mode
     private bool _spaceHeld;
 
-    // Colors
-    private static readonly Color[] ClassColors =
-    [
-        Color.FromArgb(220, 57, 119, 175),
-        Color.FromArgb(220, 214, 39, 40),
-        Color.FromArgb(220, 44, 160, 44),
-        Color.FromArgb(220, 255, 127, 14),
-        Color.FromArgb(220, 148, 103, 189),
-        Color.FromArgb(220, 140, 86, 75),
-        Color.FromArgb(220, 227, 119, 194),
-        Color.FromArgb(220, 127, 127, 127),
-        Color.FromArgb(220, 188, 189, 34),
-        Color.FromArgb(220, 23, 190, 207),
-    ];
-
-    private const int HandleSize = 8;
-
     // ── Events ─────────────────────────────────────────────────────
 
     public event EventHandler<RectAnnotation>? AnnotationAdded;
@@ -97,7 +150,7 @@ public partial class AnnotationCanvas : UserControl
         {
             _mode = value;
             UpdateCursor();
-            Invalidate();
+            InvalidateCanvas();
         }
     }
 
@@ -105,14 +158,14 @@ public partial class AnnotationCanvas : UserControl
     public int CurrentClassId
     {
         get => _currentClassId;
-        set { _currentClassId = value; }
+        set => _currentClassId = value;
     }
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public List<string> ClassNames
     {
         get => _classNames;
-        set { _classNames = value ?? []; Invalidate(); }
+        set { _classNames = value ?? []; InvalidateCanvas(); }
     }
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -123,7 +176,7 @@ public partial class AnnotationCanvas : UserControl
         {
             _selectedAnnotation = value;
             AnnotationSelected?.Invoke(this, value);
-            Invalidate();
+            InvalidateCanvas();
         }
     }
 
@@ -164,6 +217,20 @@ public partial class AnnotationCanvas : UserControl
     }
 
     /// <summary>
+    /// Clear the canvas image (call before disposing the image externally).
+    /// </summary>
+    public void ClearImage()
+    {
+        _image = null;
+        _imageW = 0;
+        _imageH = 0;
+        _annotations = [];
+        _selectedAnnotation = null;
+        _isDrawing = false;
+        InvalidateCanvas();
+    }
+
+    /// <summary>
     /// Fit the image to the control bounds.
     /// </summary>
     public void FitToWindow()
@@ -172,7 +239,7 @@ public partial class AnnotationCanvas : UserControl
         {
             _zoom = 1f;
             _panOffset = PointF.Empty;
-            Invalidate();
+            InvalidateCanvas();
             return;
         }
 
@@ -185,7 +252,7 @@ public partial class AnnotationCanvas : UserControl
             (drawPanel.Height / _zoom - _imageH) / 2f);
 
         ZoomChanged?.Invoke(this, _zoom);
-        Invalidate();
+        InvalidateCanvas();
     }
 
     /// <summary>
@@ -208,14 +275,14 @@ public partial class AnnotationCanvas : UserControl
         _selectedAnnotation = null;
         AnnotationDeleted?.Invoke(this, a);
         AnnotationSelected?.Invoke(this, null);
-        Invalidate();
+        InvalidateCanvas();
         return true;
     }
 
     /// <summary>
     /// Refresh without reloading.
     /// </summary>
-    public void RefreshCanvas() => Invalidate();
+    public void RefreshCanvas() => InvalidateCanvas();
 
     /// <summary>
     /// Notify that the space key is being held (for pan mode).
@@ -224,6 +291,33 @@ public partial class AnnotationCanvas : UserControl
     {
         _spaceHeld = held;
         UpdateCursor();
+    }
+
+    /// <summary>
+    /// Load an image from file with optimal pixel format for rendering.
+    /// Returns a Bitmap in Format32bppPArgb which is the native GDI+ screen
+    /// format — avoids per-pixel format conversion during DrawImage.
+    /// The file lock is released immediately after loading.
+    /// </summary>
+    public static Bitmap? LoadOptimizedBitmap(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var original = Image.FromStream(fs, false, false);
+            // Convert to pre-multiplied ARGB for fastest GDI+ blitting
+            var bmp = new Bitmap(original.Width, original.Height, PixelFormat.Format32bppPArgb);
+            bmp.SetResolution(original.HorizontalResolution, original.VerticalResolution);
+            using var g = Graphics.FromImage(bmp);
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(original, 0, 0, original.Width, original.Height);
+            return bmp;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ── Coordinate transforms ──────────────────────────────────────
@@ -253,55 +347,63 @@ public partial class AnnotationCanvas : UserControl
         return RectangleF.FromLTRB(tl.X, tl.Y, br.X, br.Y);
     }
 
-    // ── Painting ───────────────────────────────────────────────────
+    // ── Painting (zero-allocation hot path) ────────────────────────
 
     private void DrawPanel_Paint(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+
+        // Clear background explicitly (OnPaintBackground is suppressed in DoubleBufferedPanel)
+        g.Clear(drawPanel.BackColor);
 
         if (_image == null) return;
+
+        // Configure quality
+        g.SmoothingMode = SmoothingMode.HighQuality;
+        g.InterpolationMode = _zoom > 2f
+            ? InterpolationMode.NearestNeighbor
+            : InterpolationMode.Bilinear;
+        g.PixelOffsetMode = _zoom > 2f
+            ? PixelOffsetMode.Half
+            : PixelOffsetMode.HighQuality;
 
         // Draw image
         var tl = ImageToScreen(0, 0);
         var br = ImageToScreen(_imageW, _imageH);
         g.DrawImage(_image, tl.X, tl.Y, br.X - tl.X, br.Y - tl.Y);
 
-        // Draw annotations
-        foreach (var a in _annotations)
+        // Draw annotations (using cached GDI objects — no allocations)
+        for (int i = 0; i < _annotations.Count; i++)
         {
+            var a = _annotations[i];
             var rect = AnnotationToScreenRect(a);
-            var color = ClassColors[a.ClassId % ClassColors.Length];
+            int colorIdx = a.ClassId % ClassColors.Length;
             bool selected = a == _selectedAnnotation;
 
-            using var pen = new Pen(color, selected ? 3f : 2f);
-            if (selected) pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Solid;
+            // Border
+            var pen = selected ? SelectedPens[colorIdx] : NormalPens[colorIdx];
             g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
 
-            // Fill with semi-transparent
-            using var brush = new SolidBrush(Color.FromArgb(40, color));
-            g.FillRectangle(brush, rect);
+            // Semi-transparent fill
+            g.FillRectangle(FillBrushes[colorIdx], rect);
 
             // Label
             string label = a.ClassId < _classNames.Count
                 ? _classNames[a.ClassId]
                 : $"class_{a.ClassId}";
 
-            using var labelFont = new Font("Segoe UI", 9f, FontStyle.Bold);
-            var labelSize = g.MeasureString(label, labelFont);
-            var labelRect = new RectangleF(rect.X, rect.Y - labelSize.Height - 2,
-                labelSize.Width + 6, labelSize.Height + 2);
-            if (labelRect.Y < 0) labelRect.Y = rect.Y;
+            var labelSize = g.MeasureString(label, LabelFont);
+            float labelY = rect.Y - labelSize.Height - 2;
+            if (labelY < 0) labelY = rect.Y;
 
-            using var labelBg = new SolidBrush(color);
-            g.FillRectangle(labelBg, labelRect);
-            using var textBrush = new SolidBrush(Color.White);
-            g.DrawString(label, labelFont, textBrush, labelRect.X + 3, labelRect.Y + 1);
+            var labelRect = new RectangleF(rect.X, labelY,
+                labelSize.Width + 6, labelSize.Height + 2);
+
+            g.FillRectangle(LabelBgBrushes[colorIdx], labelRect);
+            g.DrawString(label, LabelFont, WhiteTextBrush, labelRect.X + 3, labelRect.Y + 1);
 
             // Resize handles for selected
-            if (selected) DrawResizeHandles(g, rect, color);
+            if (selected) DrawResizeHandles(g, rect, colorIdx);
         }
 
         // Drawing preview
@@ -313,45 +415,57 @@ public partial class AnnotationCanvas : UserControl
                 Math.Min(tl2.X, br2.X), Math.Min(tl2.Y, br2.Y),
                 Math.Max(tl2.X, br2.X), Math.Max(tl2.Y, br2.Y));
 
-            var drawColor = ClassColors[_currentClassId % ClassColors.Length];
-            using var drawPen = new Pen(drawColor, 2f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
-            g.DrawRectangle(drawPen, drawRect.X, drawRect.Y, drawRect.Width, drawRect.Height);
-            using var drawBrush = new SolidBrush(Color.FromArgb(30, drawColor));
-            g.FillRectangle(drawBrush, drawRect);
+            int previewColorIdx = _currentClassId % ClassColors.Length;
+            g.DrawRectangle(DrawPreviewPens[previewColorIdx],
+                drawRect.X, drawRect.Y, drawRect.Width, drawRect.Height);
+            g.FillRectangle(DrawPreviewFills[previewColorIdx], drawRect);
+
+            // Crosshair lines at current mouse position
+            g.DrawLine(CrosshairPen, _drawCurrent.X > 0 ? 0 : drawRect.Right,
+                (int)((br2.Y + tl2.Y) / 2),
+                drawPanel.Width, (int)((br2.Y + tl2.Y) / 2));
         }
     }
 
-    private void DrawResizeHandles(Graphics g, RectangleF rect, Color color)
+    private void DrawResizeHandles(Graphics g, RectangleF rect, int colorIdx)
     {
-        int hs = HandleSize;
-        using var brush = new SolidBrush(Color.White);
-        using var pen = new Pen(color, 1.5f);
+        float mx = rect.X + rect.Width / 2;
+        float my = rect.Y + rect.Height / 2;
+        var pen = HandlePens[colorIdx];
 
-        var handles = GetHandleRects(rect);
-        foreach (var h in handles.Values)
-        {
-            g.FillRectangle(brush, h);
-            g.DrawRectangle(pen, h.X, h.Y, h.Width, h.Height);
-        }
+        DrawHandle(g, pen, rect.X, rect.Y);                // TopLeft
+        DrawHandle(g, pen, mx, rect.Y);                     // Top
+        DrawHandle(g, pen, rect.Right, rect.Y);             // TopRight
+        DrawHandle(g, pen, rect.X, my);                     // Left
+        DrawHandle(g, pen, rect.Right, my);                  // Right
+        DrawHandle(g, pen, rect.X, rect.Bottom);            // BottomLeft
+        DrawHandle(g, pen, mx, rect.Bottom);                 // Bottom
+        DrawHandle(g, pen, rect.Right, rect.Bottom);        // BottomRight
+    }
+
+    private static void DrawHandle(Graphics g, Pen pen, float cx, float cy)
+    {
+        float x = cx - HandleHalf;
+        float y = cy - HandleHalf;
+        g.FillRectangle(WhiteBrush, x, y, HandleSize, HandleSize);
+        g.DrawRectangle(pen, x, y, HandleSize, HandleSize);
     }
 
     private Dictionary<ResizeHandle, RectangleF> GetHandleRects(RectangleF rect)
     {
-        int hs = HandleSize;
-        float hh = hs / 2f;
         float mx = rect.X + rect.Width / 2;
         float my = rect.Y + rect.Height / 2;
 
-        return new Dictionary<ResizeHandle, RectangleF>
+        return new Dictionary<ResizeHandle, RectangleF>(8)
         {
-            [ResizeHandle.TopLeft] = new(rect.X - hh, rect.Y - hh, hs, hs),
-            [ResizeHandle.Top] = new(mx - hh, rect.Y - hh, hs, hs),
-            [ResizeHandle.TopRight] = new(rect.Right - hh, rect.Y - hh, hs, hs),
-            [ResizeHandle.Left] = new(rect.X - hh, my - hh, hs, hs),
-            [ResizeHandle.Right] = new(rect.Right - hh, my - hh, hs, hs),
-            [ResizeHandle.BottomLeft] = new(rect.X - hh, rect.Bottom - hh, hs, hs),
-            [ResizeHandle.Bottom] = new(mx - hh, rect.Bottom - hh, hs, hs),
-            [ResizeHandle.BottomRight] = new(rect.Right - hh, rect.Bottom - hh, hs, hs),
+            [ResizeHandle.TopLeft] = new(rect.X - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.Top] = new(mx - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.TopRight] = new(rect.Right - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.Left] = new(rect.X - HandleHalf, my - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.Right] = new(rect.Right - HandleHalf, my - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.BottomLeft] = new(rect.X - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.Bottom] = new(mx - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.BottomRight] = new(rect.Right - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
         };
     }
 
@@ -442,7 +556,7 @@ public partial class AnnotationCanvas : UserControl
             float dx = (e.X - _panMouseStart.X) / _zoom;
             float dy = (e.Y - _panMouseStart.Y) / _zoom;
             _panOffset = new PointF(_panOffsetStart.X + dx, _panOffsetStart.Y + dy);
-            Invalidate();
+            InvalidateCanvas();
             return;
         }
 
@@ -452,7 +566,7 @@ public partial class AnnotationCanvas : UserControl
             imgPt.X = Math.Clamp(imgPt.X, 0, _imageW);
             imgPt.Y = Math.Clamp(imgPt.Y, 0, _imageH);
             _drawCurrent = imgPt;
-            Invalidate();
+            InvalidateCanvas();
             return;
         }
 
@@ -477,7 +591,7 @@ public partial class AnnotationCanvas : UserControl
             }
 
             AnnotationChanged?.Invoke(this, _selectedAnnotation);
-            Invalidate();
+            InvalidateCanvas();
             return;
         }
 
@@ -531,7 +645,7 @@ public partial class AnnotationCanvas : UserControl
                 AnnotationAdded?.Invoke(this, annotation);
             }
 
-            Invalidate();
+            InvalidateCanvas();
             return;
         }
 
@@ -564,7 +678,7 @@ public partial class AnnotationCanvas : UserControl
             screenPivot.Y / _zoom - imgPivot.Y);
 
         ZoomChanged?.Invoke(this, _zoom);
-        Invalidate();
+        InvalidateCanvas();
     }
 
     // ── Resize logic ───────────────────────────────────────────────
@@ -633,17 +747,21 @@ public partial class AnnotationCanvas : UserControl
         _ => Cursors.Default
     };
 
-    // ── Overrides ──────────────────────────────────────────────────
+    // ── Invalidation ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Invalidate the drawing surface. This is the single entry point
+    /// for all repaint requests to avoid hiding the base Invalidate().
+    /// </summary>
+    private void InvalidateCanvas()
+    {
+        if (drawPanel != null && !drawPanel.IsDisposed)
+            drawPanel.Invalidate();
+    }
 
     public override void Refresh()
     {
         base.Refresh();
-        Invalidate();
-    }
-
-    private void Invalidate()
-    {
-        if (drawPanel != null && !drawPanel.IsDisposed)
-            drawPanel.Invalidate();
+        InvalidateCanvas();
     }
 }

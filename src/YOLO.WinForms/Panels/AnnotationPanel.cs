@@ -452,7 +452,10 @@ public partial class AnnotationPanel : UserControl
             _project.LastOpenedImageIndex = index;
             _cmdManager.Clear();
 
-            // Load image
+            // Clear canvas BEFORE disposing the old image to avoid
+            // painting a disposed bitmap between dispose and load.
+            canvas.ClearImage();
+
             _currentImage?.Dispose();
             _currentImage = null;
 
@@ -461,15 +464,12 @@ public partial class AnnotationPanel : UserControl
 
             if (File.Exists(imgPath))
             {
-                try
-                {
-                    using var stream = File.OpenRead(imgPath);
-                    _currentImage = Image.FromStream(stream);
-                }
-                catch (Exception ex)
-                {
-                    StatusChanged?.Invoke(this, $"Failed to load image: {ex.Message}");
-                }
+                // Use optimized loading: converts to Format32bppPArgb
+                // (native GDI+ screen format) for zero-conversion blitting,
+                // and immediately releases the file lock.
+                _currentImage = YOLO.WinForms.Controls.AnnotationCanvas.LoadOptimizedBitmap(imgPath);
+                if (_currentImage == null)
+                    StatusChanged?.Invoke(this, $"Failed to load image: {imgPath}");
             }
 
             canvas.LoadImage(_currentImage, imgInfo.Annotations);
