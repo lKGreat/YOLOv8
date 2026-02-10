@@ -23,6 +23,8 @@ public class MAPMetric
 
     /// <summary>
     /// Add predictions and ground truths for one image.
+    /// Predictions are sorted by confidence (descending) before matching to ensure
+    /// that only the highest-confidence prediction matching a GT is counted as TP.
     /// </summary>
     /// <param name="predBoxes">Predicted boxes (M, 4) xyxy</param>
     /// <param name="predScores">Predicted confidence scores (M,)</param>
@@ -45,6 +47,11 @@ public class MAPMetric
 
         if (numPred == 0) return;
 
+        // Sort prediction indices by confidence descending (for proper GT matching order)
+        var sortedIndices = Enumerable.Range(0, numPred)
+            .OrderByDescending(i => predScores[i])
+            .ToArray();
+
         // Compute IoU matrix (numPred x numGT)
         var iouMatrix = new float[numPred, numGT];
         for (int i = 0; i < numPred; i++)
@@ -57,8 +64,13 @@ public class MAPMetric
             }
         }
 
-        // Match predictions to GTs for each IoU threshold
-        for (int p = 0; p < numPred; p++)
+        // Track which GTs have been matched, per IoU threshold
+        var matched = new HashSet<int>[iouThresholds.Length];
+        for (int t = 0; t < iouThresholds.Length; t++)
+            matched[t] = new HashSet<int>();
+
+        // Match predictions to GTs in confidence-descending order
+        foreach (int p in sortedIndices)
         {
             var tp = new bool[iouThresholds.Length];
 
@@ -71,6 +83,7 @@ public class MAPMetric
                 for (int g = 0; g < numGT; g++)
                 {
                     if (predClasses[p] != gtClasses[g]) continue;
+                    if (matched[t].Contains(g)) continue; // GT already matched at this threshold
                     if (iouMatrix[p, g] > bestIoU)
                     {
                         bestIoU = iouMatrix[p, g];
@@ -78,7 +91,11 @@ public class MAPMetric
                     }
                 }
 
-                tp[t] = bestGT >= 0;
+                if (bestGT >= 0)
+                {
+                    matched[t].Add(bestGT);
+                    tp[t] = true;
+                }
             }
 
             predictions.Add((predClasses[p], predScores[p], tp));

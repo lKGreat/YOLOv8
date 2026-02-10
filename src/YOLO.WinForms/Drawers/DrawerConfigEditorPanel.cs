@@ -57,21 +57,19 @@ public class DrawerConfigEditorPanel : UserControl
         btnCancel = new AntdUI.Button
         {
             Text = "取消",
-            Width = 100,
+            Width = 110,
             Height = 36,
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnCancel.Location = new Point(panelButtons.Width - 220, 12);
 
         btnSave = new AntdUI.Button
         {
             Text = "保存",
             Type = AntdUI.TTypeMini.Primary,
-            Width = 100,
+            Width = 110,
             Height = 36,
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnSave.Location = new Point(panelButtons.Width - 110, 12);
 
         panelButtons.Controls.Add(btnCancel);
         panelButtons.Controls.Add(btnSave);
@@ -103,12 +101,22 @@ public class DrawerConfigEditorPanel : UserControl
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
-        // Set button positions after parent size is known
-        if (Parent != null)
-        {
-            btnSave.Location = new Point(Width - 220, 12);
-            btnCancel.Location = new Point(Width - 110, 12);
-        }
+        LayoutButtons();
         txtEditor.Focus();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        LayoutButtons();
+    }
+
+    private void LayoutButtons()
+    {
+        int rightMargin = 24;
+        int buttonSpacing = 12;
+        
+        btnSave.Location = new Point(Width - rightMargin - btnSave.Width, 12);
+        btnCancel.Location = new Point(btnSave.Left - buttonSpacing - btnCancel.Width, 12);
     }
 }

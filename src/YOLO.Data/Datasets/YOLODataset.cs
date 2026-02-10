@@ -54,14 +54,44 @@ public class YOLODataset
 
     /// <summary>
     /// Pre-cache all labels into memory.
+    /// Logs diagnostics about missing label files and total GT box counts.
     /// </summary>
     public void CacheLabels()
     {
         labelCache = new List<BboxInstance>[imagePaths.Length];
+        int missingLabels = 0;
+        int emptyLabels = 0;
+        int totalBoxes = 0;
+
         for (int i = 0; i < imagePaths.Length; i++)
         {
+            if (!File.Exists(labelPaths[i]))
+                missingLabels++;
+
             labelCache[i] = LabelParser.ParseYOLOLabel(labelPaths[i]);
+
+            if (labelCache[i].Count == 0 && File.Exists(labelPaths[i]))
+                emptyLabels++;
+
+            totalBoxes += labelCache[i].Count;
         }
+
+        if (missingLabels > 0)
+        {
+            Console.WriteLine($"  WARNING: {missingLabels}/{imagePaths.Length} label files not found!");
+            if (missingLabels > 0 && imagePaths.Length > 0)
+            {
+                Console.WriteLine($"    Example image: {imagePaths[0]}");
+                Console.WriteLine($"    Expected label: {labelPaths[0]}");
+            }
+        }
+
+        if (emptyLabels > 0)
+        {
+            Console.WriteLine($"  WARNING: {emptyLabels}/{imagePaths.Length} label files are empty or unparseable.");
+        }
+
+        Console.WriteLine($"  Total GT boxes: {totalBoxes} across {imagePaths.Length} images");
     }
 
     /// <summary>

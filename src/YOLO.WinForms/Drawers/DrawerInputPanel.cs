@@ -44,21 +44,19 @@ public partial class DrawerInputPanel : UserControl
         btnCancel = new AntdUI.Button
         {
             Text = "取消",
-            Width = 100,
+            Width = 110,
             Height = 36,
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnCancel.Location = new Point(panelButtons.Width - 220, 12);
 
         btnConfirm = new AntdUI.Button
         {
             Text = "确定",
             Type = AntdUI.TTypeMini.Primary,
-            Width = 100,
+            Width = 110,
             Height = 36,
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnConfirm.Location = new Point(panelButtons.Width - 110, 12);
 
         panelButtons.Controls.Add(btnCancel);
         panelButtons.Controls.Add(btnConfirm);
@@ -92,12 +90,22 @@ public partial class DrawerInputPanel : UserControl
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
-        // Set button positions after parent size is known
-        if (Parent != null)
-        {
-            btnConfirm.Location = new Point(Width - 220, 12);
-            btnCancel.Location = new Point(Width - 110, 12);
-        }
+        LayoutButtons();
         txtInput.Focus();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        LayoutButtons();
+    }
+
+    private void LayoutButtons()
+    {
+        int rightMargin = 24;
+        int buttonSpacing = 12;
+        
+        btnConfirm.Location = new Point(Width - rightMargin - btnConfirm.Width, 12);
+        btnCancel.Location = new Point(btnConfirm.Left - buttonSpacing - btnCancel.Width, 12);
     }
 }

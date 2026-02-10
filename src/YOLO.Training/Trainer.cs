@@ -496,8 +496,7 @@ public class Trainer
             if (isBest)
             {
                 patienceCounter = 0;
-                ema.ApplyTo(model);
-                model.save(Path.Combine(weightsDir, "best.pt"));
+                SaveModelWithEMA(model, ema, Path.Combine(weightsDir, "best.pt"));
                 Console.Write(" *");
             }
             else
@@ -529,9 +528,8 @@ public class Trainer
                 break;
             }
 
-            // Save last model
-            ema.ApplyTo(model);
-            model.save(Path.Combine(weightsDir, "last.pt"));
+            // Save last model (with EMA weights, without modifying training model)
+            SaveModelWithEMA(model, ema, Path.Combine(weightsDir, "last.pt"));
         }
 
         sw.Stop();
@@ -593,15 +591,23 @@ public class Trainer
 
     /// <summary>
     /// Run validation and compute mAP.
+    /// Uses EMA weights for evaluation but preserves the training model state.
     /// </summary>
     private (double map50, double map5095, double[] perClassAP50) Validate(
         YOLOModel model, ModelEMA ema, YOLODataset valDataset,
         int numClasses, int imgSize)
     {
+        // Save training state before applying EMA (so training is not disrupted)
+        var savedState = SaveModelState(model);
+
         ema.ApplyTo(model);
         model.eval();
 
         var metric = new MAPMetric(numClasses);
+
+        int totalPredictions = 0;
+        int totalGTs = 0;
+        float maxConf = 0f;
 
         using (torch.no_grad())
         {
@@ -638,6 +644,14 @@ public class Trainer
 
                     int numPred = (int)predBoxesXyxy.shape[0];
                     int numGT = (int)gtBoxesImg.shape[0];
+
+                    totalPredictions += numPred;
+                    totalGTs += numGT;
+                    if (numPred > 0)
+                    {
+                        var batchMaxConf = filteredScores.max().cpu().item<float>();
+                        if (batchMaxConf > maxConf) maxConf = batchMaxConf;
+                    }
 
                     var predBoxArr = new float[numPred, 4];
                     var predScoreArr = new float[numPred];
@@ -682,10 +696,77 @@ public class Trainer
             }
         }
 
+        // Diagnostic: warn if validation has no GTs or no predictions
+        if (totalGTs == 0)
+        {
+            Console.Write(" [WARN: 0 GT boxes in val]");
+        }
+        else if (totalPredictions == 0)
+        {
+            Console.Write($" [WARN: 0 preds>0.001, GTs={totalGTs}]");
+        }
+
         var (map50, map5095, perClassAP50) = metric.Compute();
 
+        // Restore training state (undo EMA overwrite)
+        RestoreModelState(model, savedState);
         model.train();
 
         return (map50, map5095, perClassAP50);
+    }
+
+    /// <summary>
+    /// Save a snapshot of all model parameters and buffers (for later restoration).
+    /// </summary>
+    private static Dictionary<string, Tensor> SaveModelState(nn.Module model)
+    {
+        var state = new Dictionary<string, Tensor>();
+        using var _ = torch.no_grad();
+
+        foreach (var (name, param) in model.named_parameters())
+        {
+            state[name] = param.detach().clone();
+        }
+        foreach (var (name, buffer) in model.named_buffers())
+        {
+            state[$"__buffer__{name}"] = buffer.detach().clone();
+        }
+
+        return state;
+    }
+
+    /// <summary>
+    /// Restore model parameters and buffers from a saved snapshot, then dispose the snapshot.
+    /// </summary>
+    private static void RestoreModelState(nn.Module model, Dictionary<string, Tensor> savedState)
+    {
+        using var _ = torch.no_grad();
+
+        foreach (var (name, param) in model.named_parameters())
+        {
+            if (savedState.TryGetValue(name, out var saved))
+                param.copy_(saved);
+        }
+        foreach (var (name, buffer) in model.named_buffers())
+        {
+            if (savedState.TryGetValue($"__buffer__{name}", out var saved))
+                buffer.copy_(saved);
+        }
+
+        // Dispose all saved tensors
+        foreach (var t in savedState.Values)
+            t.Dispose();
+        savedState.Clear();
+    }
+
+    /// <summary>
+    /// Save model to disk using EMA weights, without permanently modifying the training model.
+    /// </summary>
+    private static void SaveModelWithEMA(nn.Module model, ModelEMA ema, string path)
+    {
+        var savedState = SaveModelState(model);
+        ema.ApplyTo(model);
+        model.save(path);
+        RestoreModelState(model, savedState);
     }
 }

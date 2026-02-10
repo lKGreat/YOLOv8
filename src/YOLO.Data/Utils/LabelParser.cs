@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace YOLO.Data.Utils;
 
 /// <summary>
@@ -26,11 +28,12 @@ public static class LabelParser
             var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 5) continue;
 
+            // Use InvariantCulture to ensure '.' is always the decimal separator
             if (!int.TryParse(parts[0], out int classId)) continue;
-            if (!float.TryParse(parts[1], out float cx)) continue;
-            if (!float.TryParse(parts[2], out float cy)) continue;
-            if (!float.TryParse(parts[3], out float w)) continue;
-            if (!float.TryParse(parts[4], out float h)) continue;
+            if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float cx)) continue;
+            if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float cy)) continue;
+            if (!float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float w)) continue;
+            if (!float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out float h)) continue;
 
             var instance = new BboxInstance
             {
@@ -44,7 +47,7 @@ public static class LabelParser
                 var segPoints = new List<float>();
                 for (int i = 5; i < parts.Length; i++)
                 {
-                    if (float.TryParse(parts[i], out float val))
+                    if (float.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out float val))
                         segPoints.Add(val);
                 }
                 if (segPoints.Count >= 6) // at least 3 points

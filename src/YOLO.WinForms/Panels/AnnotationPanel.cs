@@ -188,6 +188,7 @@ public partial class AnnotationPanel : UserControl
         if (ParentWindow == null) return;
 
         var drawerPanel = new DrawerNewProjectPanel();
+        drawerPanel.Width = 800;  // 增大到两倍宽度
         await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
 
         if (!drawerPanel.IsConfirmed || string.IsNullOrWhiteSpace(drawerPanel.ProjectName))
@@ -289,6 +290,7 @@ public partial class AnnotationPanel : UserControl
         if (_project == null || ParentWindow == null) return;
 
         var drawerPanel = new DrawerInputPanel("添加类别", "输入类别名称...");
+        drawerPanel.Width = 700;  // 增大到两倍宽度
         await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
 
         if (!drawerPanel.IsConfirmed || string.IsNullOrWhiteSpace(drawerPanel.InputValue))
@@ -306,6 +308,7 @@ public partial class AnnotationPanel : UserControl
         if (ParentWindow != null)
         {
             var drawerPanel = new DrawerConfirmPanel($"确定要删除类别 '{classNameToRemove}' 吗?", "删除确认");
+            drawerPanel.Width = 700;  // 增大到两倍宽度
             await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
 
             if (!drawerPanel.IsConfirmed)
@@ -797,6 +800,7 @@ public partial class AnnotationPanel : UserControl
 
         var drawerPanel = new DrawerConfigEditorPanel("编辑数据集配置");
         drawerPanel.YamlText = text;
+        drawerPanel.Width = 1000;  // 增大到两倍宽度，给代码编辑更多空间
         await AntdUI.Drawer.wait(ParentWindow, drawerPanel, AntdUI.TAlignMini.Right);
 
         if (drawerPanel.IsConfirmed)

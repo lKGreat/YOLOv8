@@ -52,12 +52,13 @@ public class BboxLoss
             var fgTargetLTRB = targetLTRB[fgMask]; // (numFG, 4)
             var fgPredDist = predDist[fgMask]; // (numFG, 4*(reg_max+1))
 
+            // DFLoss expects 2D target (numFG, 4) to return per-anchor loss (numFG, 1)
             dflLoss = DFLoss(
-                fgPredDist.view(-1, regMax + 1), // (numFG*4, reg_max+1)
-                fgTargetLTRB.view(-1)             // (numFG*4)
+                fgPredDist.view(-1, regMax + 1), // (numFG*4, reg_max+1) -- flattened for cross_entropy
+                fgTargetLTRB                      // (numFG, 4) -- keep 2D for correct per-anchor mean
             );
-            dflLoss = (dflLoss * weight.unsqueeze(-1).expand_as(fgTargetLTRB)).sum()
-                       / targetScoresSum;
+            // dflLoss: (numFG, 1), weight: (numFG,) -> weighted sum
+            dflLoss = (dflLoss * weight.unsqueeze(-1)).sum() / targetScoresSum;
         }
         else
         {
@@ -71,21 +72,24 @@ public class BboxLoss
     /// Distribution Focal Loss.
     /// Computes weighted cross-entropy between the two adjacent bins of the target.
     /// </summary>
-    /// <param name="predDist">Predicted distribution logits (M, reg_max+1)</param>
-    /// <param name="target">Target continuous values (M,)</param>
-    /// <returns>DFL loss per element (M,)</returns>
+    /// <param name="predDist">Predicted distribution logits (numFG*4, reg_max+1)</param>
+    /// <param name="target">Target continuous LTRB values (numFG, 4)</param>
+    /// <returns>DFL loss per anchor (numFG, 1) -- mean over 4 LTRB directions</returns>
     private Tensor DFLoss(Tensor predDist, Tensor target)
     {
+        // target: (numFG, 4), tl/tr/wl/wr all (numFG, 4)
         var tl = target.to(ScalarType.Int64);       // floor
         var tr = tl + 1;                             // ceil
         var wl = tr.to(ScalarType.Float32) - target; // weight for floor
         var wr = 1.0f - wl;                          // weight for ceil
 
+        // cross_entropy needs 1D target, so flatten to (numFG*4,), then reshape back to (numFG, 4)
         var lossL = functional.cross_entropy(predDist, tl.view(-1), reduction: Reduction.None)
-            .view(tl.shape) * wl;
+            .view(tl.shape) * wl;   // (numFG, 4)
         var lossR = functional.cross_entropy(predDist, tr.clamp_max(regMax).view(-1), reduction: Reduction.None)
-            .view(tr.shape) * wr;
+            .view(tr.shape) * wr;   // (numFG, 4)
 
+        // Mean over the 4 LTRB directions -> (numFG, 1) per-anchor DFL loss
         return (lossL + lossR).mean(new long[] { -1 }, keepdim: true);
     }
 }

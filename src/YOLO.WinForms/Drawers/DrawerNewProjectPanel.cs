@@ -76,11 +76,10 @@ public class DrawerNewProjectPanel : UserControl
         btnBrowseFolder = new AntdUI.Button
         {
             Text = "浏览...",
-            Width = 80,
+            Width = 100,
             Height = 36,
-            Anchor = AnchorStyles.Right
+            Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnBrowseFolder.Location = new Point(panelFolderSelection.Width - 90, 7);
 
         panelFolderSelection.Controls.Add(lblFolderPath);
         panelFolderSelection.Controls.Add(btnBrowseFolder);
@@ -96,21 +95,19 @@ public class DrawerNewProjectPanel : UserControl
         btnCancel = new AntdUI.Button
         {
             Text = "取消",
-            Width = 100,
+            Width = 110,
             Height = 36,
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnCancel.Location = new Point(panelButtons.Width - 220, 12);
 
         btnCreate = new AntdUI.Button
         {
             Text = "创建",
             Type = AntdUI.TTypeMini.Primary,
-            Width = 100,
+            Width = 110,
             Height = 36,
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
-        btnCreate.Location = new Point(panelButtons.Width - 110, 12);
 
         panelButtons.Controls.Add(btnCancel);
         panelButtons.Controls.Add(btnCreate);
@@ -178,12 +175,30 @@ public class DrawerNewProjectPanel : UserControl
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
-        // Set button positions after parent size is known
-        if (Parent != null)
-        {
-            btnCreate.Location = new Point(Width - 220, 12);
-            btnCancel.Location = new Point(Width - 110, 12);
-        }
+        LayoutButtons();
         txtProjectName.Focus();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        LayoutButtons();
+    }
+
+    private void LayoutButtons()
+    {
+        // Layout bottom buttons (取消 on left, 创建 on right)
+        int rightMargin = 24;
+        int buttonSpacing = 12;
+        
+        btnCreate.Location = new Point(Width - rightMargin - btnCreate.Width, 12);
+        btnCancel.Location = new Point(btnCreate.Left - buttonSpacing - btnCancel.Width, 12);
+        
+        // Layout browse button in folder panel
+        var panelFolder = btnBrowseFolder.Parent;
+        if (panelFolder != null)
+        {
+            btnBrowseFolder.Location = new Point(panelFolder.Width - rightMargin - btnBrowseFolder.Width, 7);
+        }
     }
 }
