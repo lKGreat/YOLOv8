@@ -68,9 +68,10 @@ public class DrawerNewProjectPanel : UserControl
             Text = "未选择文件夹",
             Font = new Font("Segoe UI", 10F),
             AutoSize = false,
-            Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = Color.Gray
+            ForeColor = Color.Gray,
+            Location = new Point(0, 7),
+            Height = 36
         };
 
         btnBrowseFolder = new AntdUI.Button
@@ -81,8 +82,8 @@ public class DrawerNewProjectPanel : UserControl
             Anchor = AnchorStyles.Right | AnchorStyles.Top
         };
 
-        panelFolderSelection.Controls.Add(lblFolderPath);
         panelFolderSelection.Controls.Add(btnBrowseFolder);
+        panelFolderSelection.Controls.Add(lblFolderPath);
 
         // Initialize button panel
         var panelButtons = new System.Windows.Forms.Panel
@@ -199,6 +200,9 @@ public class DrawerNewProjectPanel : UserControl
         if (panelFolder != null)
         {
             btnBrowseFolder.Location = new Point(panelFolder.Width - rightMargin - btnBrowseFolder.Width, 7);
+            
+            // Adjust label width to not overlap with button
+            lblFolderPath.Width = btnBrowseFolder.Left - buttonSpacing;
         }
     }
 }

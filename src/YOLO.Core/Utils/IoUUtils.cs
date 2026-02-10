@@ -118,10 +118,13 @@ public static class IoUUtils
         var v = (4.0 / (Math.PI * Math.PI)) *
             torch.pow(torch.atan(w2 / (h2 + eps)) - torch.atan(w1 / (h1 + eps)), 2);
 
+        // alpha is treated as a constant (no gradient) matching Python ultralytics
+        Tensor alpha_val;
         using (torch.no_grad())
         {
-            var alpha = v / (1.0 - iou + v + eps);
-            return iou - rho2 / c2 - alpha * v;
+            alpha_val = v / (1.0 - iou + v + eps);
         }
+        // Return OUTSIDE no_grad so gradients flow through iou, rho2/c2, and v
+        return iou - rho2 / c2 - alpha_val * v;
     }
 }

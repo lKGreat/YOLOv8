@@ -45,6 +45,23 @@ partial class TrainingPanel
         this.cboDevice = new AntdUI.Select();
         this.chkCosLR = new AntdUI.Switch();
         this.lblCosLR = new AntdUI.Label();
+
+        // Distillation controls
+        this.chkDistill = new AntdUI.Switch();
+        this.lblDistill = new AntdUI.Label();
+        this.lblTeacher = new AntdUI.Label();
+        this.txtTeacher = new AntdUI.Input();
+        this.btnBrowseTeacher = new AntdUI.Button();
+        this.lblTeacherVariant = new AntdUI.Label();
+        this.cboTeacherVariant = new AntdUI.Select();
+        this.lblDistillMode = new AntdUI.Label();
+        this.cboDistillMode = new AntdUI.Select();
+        this.lblDistillWeight = new AntdUI.Label();
+        this.txtDistillWeight = new AntdUI.Input();
+        this.lblDistillTemp = new AntdUI.Label();
+        this.txtDistillTemp = new AntdUI.Input();
+        this.panelDistill = new System.Windows.Forms.Panel();
+
         this.panelButtons = new FlowLayoutPanel();
         this.btnStart = new AntdUI.Button();
         this.btnStop = new AntdUI.Button();
@@ -86,9 +103,11 @@ partial class TrainingPanel
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         this.tableConfig.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36F));
-        this.tableConfig.RowCount = 12;
+        this.tableConfig.RowCount = 13;
         for (int i = 0; i < 12; i++)
             this.tableConfig.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        // Row 12: distill panel - auto size
+        this.tableConfig.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         this.tableConfig.Padding = new Padding(6, 4, 6, 0);
 
         int row = 0;
@@ -227,6 +246,93 @@ partial class TrainingPanel
         this.chkCosLR.Checked = false;
         this.tableConfig.Controls.Add(this.chkCosLR, 1, row);
 
+        // Row 11: Distillation toggle
+        row = 11;
+        this.lblDistill.Text = "蒸馏:";
+        this.lblDistill.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblDistill.Dock = DockStyle.Fill;
+        this.tableConfig.Controls.Add(this.lblDistill, 0, row);
+        this.chkDistill.Dock = DockStyle.Left;
+        this.chkDistill.Checked = false;
+        this.tableConfig.Controls.Add(this.chkDistill, 1, row);
+
+        // ── Distillation detail panel (collapsible) ─────────────
+        this.panelDistill.Dock = DockStyle.None;
+        this.panelDistill.AutoSize = false;
+        this.panelDistill.Visible = false;
+
+        var tableDistill = new TableLayoutPanel();
+        tableDistill.Dock = DockStyle.Fill;
+        tableDistill.ColumnCount = 3;
+        tableDistill.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
+        tableDistill.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tableDistill.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36F));
+        tableDistill.RowCount = 5;
+        for (int i = 0; i < 5; i++)
+            tableDistill.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        tableDistill.Padding = new Padding(6, 0, 6, 0);
+
+        // Distill Row 0: Teacher model path
+        this.lblTeacher.Text = "教师模型:";
+        this.lblTeacher.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblTeacher.Dock = DockStyle.Fill;
+        tableDistill.Controls.Add(this.lblTeacher, 0, 0);
+        this.txtTeacher.Dock = DockStyle.Fill;
+        this.txtTeacher.PlaceholderText = "选择教师模型权重文件 (.pt)";
+        tableDistill.Controls.Add(this.txtTeacher, 1, 0);
+        this.btnBrowseTeacher.Text = "...";
+        this.btnBrowseTeacher.Size = new Size(32, 30);
+        this.btnBrowseTeacher.Ghost = true;
+        tableDistill.Controls.Add(this.btnBrowseTeacher, 2, 0);
+
+        // Distill Row 1: Teacher variant
+        this.lblTeacherVariant.Text = "教师变体:";
+        this.lblTeacherVariant.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblTeacherVariant.Dock = DockStyle.Fill;
+        tableDistill.Controls.Add(this.lblTeacherVariant, 0, 1);
+        this.cboTeacherVariant.Dock = DockStyle.Fill;
+        tableDistill.Controls.Add(this.cboTeacherVariant, 1, 1);
+        tableDistill.SetColumnSpan(this.cboTeacherVariant, 2);
+
+        // Distill Row 2: Mode
+        this.lblDistillMode.Text = "蒸馏模式:";
+        this.lblDistillMode.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblDistillMode.Dock = DockStyle.Fill;
+        tableDistill.Controls.Add(this.lblDistillMode, 0, 2);
+        this.cboDistillMode.Dock = DockStyle.Fill;
+        this.cboDistillMode.Items.AddRange(new object[] { "logit", "feature", "both" });
+        this.cboDistillMode.SelectedIndex = 0;
+        tableDistill.Controls.Add(this.cboDistillMode, 1, 2);
+        tableDistill.SetColumnSpan(this.cboDistillMode, 2);
+
+        // Distill Row 3: Weight
+        this.lblDistillWeight.Text = "蒸馏权重:";
+        this.lblDistillWeight.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblDistillWeight.Dock = DockStyle.Fill;
+        tableDistill.Controls.Add(this.lblDistillWeight, 0, 3);
+        this.txtDistillWeight.Dock = DockStyle.Fill;
+        this.txtDistillWeight.Text = "1.0";
+        tableDistill.Controls.Add(this.txtDistillWeight, 1, 3);
+        tableDistill.SetColumnSpan(this.txtDistillWeight, 2);
+
+        // Distill Row 4: Temperature
+        this.lblDistillTemp.Text = "蒸馏温度:";
+        this.lblDistillTemp.TextAlign = ContentAlignment.MiddleLeft;
+        this.lblDistillTemp.Dock = DockStyle.Fill;
+        tableDistill.Controls.Add(this.lblDistillTemp, 0, 4);
+        this.txtDistillTemp.Dock = DockStyle.Fill;
+        this.txtDistillTemp.Text = "20.0";
+        tableDistill.Controls.Add(this.txtDistillTemp, 1, 4);
+        tableDistill.SetColumnSpan(this.txtDistillTemp, 2);
+
+        this.panelDistill.Controls.Add(tableDistill);
+        this.panelDistill.Size = new Size(320, 195);
+
+        // Row 12: embedded distill panel
+        row = 12;
+        this.tableConfig.Controls.Add(this.panelDistill, 0, row);
+        this.tableConfig.SetColumnSpan(this.panelDistill, 3);
+
         // panelButtons
         this.panelButtons.Dock = DockStyle.Bottom;
         this.panelButtons.FlowDirection = FlowDirection.LeftToRight;
@@ -337,6 +443,23 @@ partial class TrainingPanel
     private AntdUI.Select cboDevice;
     private AntdUI.Switch chkCosLR;
     private AntdUI.Label lblCosLR;
+
+    // Distillation
+    private AntdUI.Switch chkDistill;
+    private AntdUI.Label lblDistill;
+    private System.Windows.Forms.Panel panelDistill;
+    private AntdUI.Label lblTeacher;
+    private AntdUI.Input txtTeacher;
+    private AntdUI.Button btnBrowseTeacher;
+    private AntdUI.Label lblTeacherVariant;
+    private AntdUI.Select cboTeacherVariant;
+    private AntdUI.Label lblDistillMode;
+    private AntdUI.Select cboDistillMode;
+    private AntdUI.Label lblDistillWeight;
+    private AntdUI.Input txtDistillWeight;
+    private AntdUI.Label lblDistillTemp;
+    private AntdUI.Input txtDistillTemp;
+
     private FlowLayoutPanel panelButtons;
     private AntdUI.Button btnStart;
     private AntdUI.Button btnStop;

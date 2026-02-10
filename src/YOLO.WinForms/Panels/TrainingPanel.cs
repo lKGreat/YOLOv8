@@ -27,6 +27,7 @@ public partial class TrainingPanel : UserControl
         InitializeComponent();
         InitializeMetricsChart();
         PopulateModelVersions();
+        PopulateTeacherVariants();
         WireEvents();
     }
 
@@ -65,12 +66,58 @@ public partial class TrainingPanel : UserControl
             cboVariant.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// Populate teacher variant combo with all variants for the selected version.
+    /// Default to "l" (large) which is typically a good teacher model.
+    /// </summary>
+    private void PopulateTeacherVariants()
+    {
+        var version = GetSelectedText(cboVersion);
+        if (string.IsNullOrEmpty(version)) return;
+
+        var variants = ModelRegistry.GetVariants(version);
+        cboTeacherVariant.Items.Clear();
+        foreach (var v in variants)
+            cboTeacherVariant.Items.Add(v);
+
+        // Default teacher to "l" (large), or last variant if not available
+        int defaultIdx = -1;
+        for (int i = 0; i < cboTeacherVariant.Items.Count; i++)
+        {
+            if (cboTeacherVariant.Items[i]?.ToString() == "l")
+            {
+                defaultIdx = i;
+                break;
+            }
+        }
+        if (defaultIdx >= 0)
+            cboTeacherVariant.SelectedIndex = defaultIdx;
+        else if (cboTeacherVariant.Items.Count > 0)
+            cboTeacherVariant.SelectedIndex = cboTeacherVariant.Items.Count - 1;
+    }
+
+    /// <summary>
+    /// Toggle distillation panel visibility.
+    /// </summary>
+    private void SetDistillPanelVisible(bool visible)
+    {
+        panelDistill.Visible = visible;
+    }
+
     private void WireEvents()
     {
-        cboVersion.SelectedIndexChanged += (s, e) => UpdateVariants();
+        cboVersion.SelectedIndexChanged += (s, e) =>
+        {
+            UpdateVariants();
+            PopulateTeacherVariants();
+        };
         btnBrowseDataset.Click += BtnBrowseDataset_Click;
+        btnBrowseTeacher.Click += BtnBrowseTeacher_Click;
         btnStart.Click += BtnStart_Click;
         btnStop.Click += BtnStop_Click;
+
+        // Distillation toggle
+        chkDistill.CheckedChanged += (s, e) => SetDistillPanelVisible(chkDistill.Checked);
 
         trainingService.LogMessage += (s, msg) => AppendLog(msg);
 
@@ -82,8 +129,9 @@ public partial class TrainingPanel : UserControl
                 m.Map50, m.Map5095, m.LearningRate);
 
             var bestMark = m.IsBest ? " *" : "";
+            var distillStr = m.DistillLoss > 0 ? $"  distill={m.DistillLoss:F4}" : "";
             AppendLog($"Epoch {m.Epoch}/{m.TotalEpochs}  " +
-                $"box={m.BoxLoss:F4}  cls={m.ClsLoss:F4}  dfl={m.DflLoss:F4}  " +
+                $"box={m.BoxLoss:F4}  cls={m.ClsLoss:F4}  dfl={m.DflLoss:F4}{distillStr}  " +
                 $"mAP50={m.Map50:F4}  mAP50-95={m.Map5095:F4}  " +
                 $"fitness={m.Fitness:F4}  lr={m.LearningRate:E2}{bestMark}");
 
@@ -134,6 +182,18 @@ public partial class TrainingPanel : UserControl
             txtDataset.Text = dlg.FileName;
     }
 
+    private void BtnBrowseTeacher_Click(object? sender, EventArgs e)
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Filter = "Model Weights|*.pt;*.bin|All Files|*.*",
+            Title = "选择教师模型权重文件"
+        };
+
+        if (dlg.ShowDialog() == DialogResult.OK)
+            txtTeacher.Text = dlg.FileName;
+    }
+
     private async void BtnStart_Click(object? sender, EventArgs e)
     {
         if (string.IsNullOrWhiteSpace(txtDataset.Text))
@@ -157,6 +217,34 @@ public partial class TrainingPanel : UserControl
             var dataConfig = DatasetConfig.Load(txtDataset.Text);
             AppendLog($"Dataset: {dataConfig.Nc} classes, Train: {dataConfig.Train}");
 
+            // Build distillation settings
+            string? teacherPath = null;
+            string teacherVariant = "l";
+            double distillWeight = 1.0;
+            double distillTemp = 20.0;
+            string distillMode = "logit";
+
+            if (chkDistill.Checked)
+            {
+                teacherPath = txtTeacher.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(teacherPath))
+                {
+                    ShowMessage("请选择教师模型权重文件", AntdUI.TType.Warn);
+                    SetTrainingState(false);
+                    return;
+                }
+                if (!File.Exists(teacherPath))
+                {
+                    ShowMessage($"教师模型文件不存在: {teacherPath}", AntdUI.TType.Warn);
+                    SetTrainingState(false);
+                    return;
+                }
+                teacherVariant = GetSelectedText(cboTeacherVariant) ?? "l";
+                distillMode = GetSelectedText(cboDistillMode) ?? "logit";
+                _ = double.TryParse(txtDistillWeight.Text, out distillWeight);
+                _ = double.TryParse(txtDistillTemp.Text, out distillTemp);
+            }
+
             var config = new TrainConfig
             {
                 ModelVersion = GetSelectedText(cboVersion) ?? "v8",
@@ -168,7 +256,13 @@ public partial class TrainingPanel : UserControl
                 Lr0 = double.Parse(txtLr0.Text),
                 Optimizer = GetSelectedText(cboOptimizer) ?? "auto",
                 CosLR = chkCosLR.Checked,
-                SaveDir = txtSaveDir.Text
+                SaveDir = txtSaveDir.Text,
+                // Distillation
+                TeacherModelPath = chkDistill.Checked ? teacherPath : null,
+                TeacherVariant = teacherVariant,
+                DistillWeight = distillWeight,
+                DistillTemperature = distillTemp,
+                DistillMode = distillMode
             };
 
             // Determine device
@@ -185,8 +279,18 @@ public partial class TrainingPanel : UserControl
                 trainDevice = torch.CPU;
             }
 
+            var distillInfo = chkDistill.Checked
+                ? $" (蒸馏: {distillMode}, 教师={config.TeacherVariant})"
+                : "";
+            AppendLog($"Model: YOLO{config.ModelVersion}{config.ModelVariant}, LR: {config.Lr0}, Optimizer: {config.Optimizer}");
+            if (chkDistill.Checked)
+            {
+                AppendLog($"蒸馏模式: {distillMode}, 教师模型: YOLO{config.ModelVersion}{teacherVariant}");
+                AppendLog($"教师权重: {teacherPath}");
+                AppendLog($"蒸馏权重: {distillWeight}, 蒸馏温度: {distillTemp}");
+            }
             StatusChanged?.Invoke(this,
-                $"Training YOLO{config.ModelVersion}{config.ModelVariant} on {deviceStr}...");
+                $"Training YOLO{config.ModelVersion}{config.ModelVariant} on {deviceStr}{distillInfo}...");
 
             // Redirect console output to log
             var consoleWriter = new TextBoxConsoleWriter(this, txtLog);
@@ -238,6 +342,7 @@ public partial class TrainingPanel : UserControl
         btnStop.Enabled = isTraining;
         tableConfig.Enabled = !isTraining;
         btnBrowseDataset.Enabled = !isTraining;
+        btnBrowseTeacher.Enabled = !isTraining;
 
         if (isTraining)
         {
