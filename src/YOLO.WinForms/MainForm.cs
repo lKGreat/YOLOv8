@@ -14,6 +14,7 @@ public partial class MainForm : AntdUI.Window
     private TrainingPanel? trainingPanel;
     private ExportPanel? exportPanel;
     private InferencePanel? inferencePanel;
+    private ModelTestPanel? modelTestPanel;
 
     public MainForm()
     {
@@ -48,6 +49,12 @@ public partial class MainForm : AntdUI.Window
         inferencePanel.Dock = DockStyle.Fill;
         inferencePanel.StatusChanged += (s, msg) => SetStatus(msg);
         tabInference.Controls.Add(inferencePanel);
+
+        // Model Test Panel
+        modelTestPanel = new ModelTestPanel();
+        modelTestPanel.Dock = DockStyle.Fill;
+        modelTestPanel.StatusChanged += (s, msg) => SetStatus(msg);
+        tabModelTest.Controls.Add(modelTestPanel);
     }
 
     /// <summary>

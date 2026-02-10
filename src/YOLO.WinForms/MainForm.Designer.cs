@@ -22,6 +22,7 @@ partial class MainForm
         this.tabTraining = new AntdUI.TabPage();
         this.tabExport = new AntdUI.TabPage();
         this.tabInference = new AntdUI.TabPage();
+        this.tabModelTest = new AntdUI.TabPage();
         this.panelStatus = new System.Windows.Forms.Panel();
         this.lblStatus = new AntdUI.Label();
         this.lblDevice = new AntdUI.Label();
@@ -52,10 +53,14 @@ partial class MainForm
         this.tabInference.Text = "Inference";
         this.tabInference.Padding = new Padding(4);
 
+        this.tabModelTest.Text = "Model Test";
+        this.tabModelTest.Padding = new Padding(4);
+
         this.tabs.Pages.Add(this.tabAnnotation);
         this.tabs.Pages.Add(this.tabTraining);
         this.tabs.Pages.Add(this.tabExport);
         this.tabs.Pages.Add(this.tabInference);
+        this.tabs.Pages.Add(this.tabModelTest);
 
         // ── panelStatus (bottom status bar) ────────────────────
         this.panelStatus.Dock = DockStyle.Bottom;
@@ -102,6 +107,7 @@ partial class MainForm
     private AntdUI.TabPage tabTraining;
     private AntdUI.TabPage tabExport;
     private AntdUI.TabPage tabInference;
+    private AntdUI.TabPage tabModelTest;
     private System.Windows.Forms.Panel panelStatus;
     private AntdUI.Label lblStatus;
     private AntdUI.Label lblDevice;

@@ -95,8 +95,12 @@ public partial class TrainingPanel : UserControl
 
         trainingService.TrainingCompleted += (s, result) =>
         {
-            AppendLog($"\nTraining completed! Best fitness: {result.BestFitness:F4}");
-            Invoke(() => SetTrainingState(false));
+            AppendLog(BuildTrainingReport(result));
+            Invoke(() =>
+            {
+                SetTrainingState(false);
+                ShowTrainingResultMessage(result);
+            });
         };
         trainingService.TrainingFailed += (s, msg) =>
         {
@@ -197,9 +201,10 @@ public partial class TrainingPanel : UserControl
 
             if (result != null)
             {
+                string grade = GetModelGrade(result.BestFitness);
                 StatusChanged?.Invoke(this,
-                    $"Training complete: fitness={result.BestFitness:F4} mAP50={result.BestMap50:F4}");
-                ShowMessage("Training completed successfully!", AntdUI.TType.Success);
+                    $"Training complete: Grade={grade} fitness={result.BestFitness:F4} " +
+                    $"mAP50={result.BestMap50:F4} mAP50-95={result.BestMap5095:F4}");
             }
         }
         catch (Exception ex)
@@ -242,6 +247,108 @@ public partial class TrainingPanel : UserControl
         {
             btnStart.Loading = false;
         }
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // Training Quality Report
+    // ═════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Build a comprehensive training quality report string.
+    /// </summary>
+    private static string BuildTrainingReport(YOLO.Training.TrainResult result)
+    {
+        var sb = new System.Text.StringBuilder();
+        string grade = GetModelGrade(result.BestFitness);
+
+        sb.AppendLine();
+        sb.AppendLine("═══════════════════════════════════════════════════");
+        sb.AppendLine("           TRAINING COMPLETE - MODEL REPORT");
+        sb.AppendLine("═══════════════════════════════════════════════════");
+        sb.AppendLine();
+        sb.AppendLine($"  Model Quality Grade:  {grade}");
+        sb.AppendLine();
+        sb.AppendLine("  ── Metrics ──────────────────────────────────────");
+        sb.AppendLine($"  Fitness Score:        {result.BestFitness:F4}  (0.1*mAP50 + 0.9*mAP50-95)");
+        sb.AppendLine($"  mAP@0.5:              {result.BestMap50:F4}  ({result.BestMap50 * 100:F1}%)");
+        sb.AppendLine($"  mAP@0.5:0.95:         {result.BestMap5095:F4}  ({result.BestMap5095 * 100:F1}%)");
+        sb.AppendLine();
+        sb.AppendLine("  ── Training Info ────────────────────────────────");
+        sb.AppendLine($"  Model:                YOLO{result.ModelVersion}{result.ModelVariant}");
+        sb.AppendLine($"  Parameters:           {result.ParamCount:N0}");
+        sb.AppendLine($"  Best Epoch:           {result.BestEpoch}");
+        sb.AppendLine($"  Training Time:        {result.TrainingTime:hh\\:mm\\:ss}");
+
+        // Per-class AP
+        if (result.PerClassAP50.Length > 0 && result.ClassNames.Length > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("  ── Per-Class AP@0.5 ─────────────────────────────");
+            int maxLen = result.ClassNames.Max(n => n.Length);
+            for (int i = 0; i < result.PerClassAP50.Length && i < result.ClassNames.Length; i++)
+            {
+                double ap = result.PerClassAP50[i];
+                string bar = new string('|', (int)(ap * 30));
+                string pad = result.ClassNames[i].PadRight(maxLen);
+                string apGrade = ap >= 0.75 ? "Excellent" : ap >= 0.5 ? "Good" : ap >= 0.3 ? "Fair" : "Poor";
+                sb.AppendLine($"  {pad}  {ap:F4} ({ap * 100:F1}%)  {bar}  [{apGrade}]");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("  ── Quality Assessment ───────────────────────────");
+        if (result.BestFitness >= 0.7)
+            sb.AppendLine("  The model shows excellent detection performance.");
+        else if (result.BestFitness >= 0.5)
+            sb.AppendLine("  The model shows good performance. Consider more training data or epochs for improvement.");
+        else if (result.BestFitness >= 0.3)
+            sb.AppendLine("  The model shows fair performance. More training data, augmentation, or hyperparameter tuning recommended.");
+        else
+            sb.AppendLine("  The model needs significant improvement. Check data quality, increase epochs, or try a larger model variant.");
+
+        sb.AppendLine("═══════════════════════════════════════════════════");
+        sb.AppendLine();
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Get a letter grade based on the fitness score.
+    /// </summary>
+    private static string GetModelGrade(double fitness)
+    {
+        return fitness switch
+        {
+            >= 0.80 => "S  (Outstanding)",
+            >= 0.70 => "A  (Excellent)",
+            >= 0.60 => "B+ (Very Good)",
+            >= 0.50 => "B  (Good)",
+            >= 0.40 => "C+ (Above Average)",
+            >= 0.30 => "C  (Average)",
+            >= 0.20 => "D  (Below Average)",
+            _ => "F  (Needs Improvement)"
+        };
+    }
+
+    /// <summary>
+    /// Show a summary message popup with the training results.
+    /// </summary>
+    private void ShowTrainingResultMessage(YOLO.Training.TrainResult result)
+    {
+        string grade = GetModelGrade(result.BestFitness);
+
+        string summary = $"Training Complete!\n\n" +
+                          $"Grade: {grade}\n" +
+                          $"Fitness: {result.BestFitness:F4}\n" +
+                          $"mAP@0.5: {result.BestMap50 * 100:F1}%\n" +
+                          $"mAP@0.5:0.95: {result.BestMap5095 * 100:F1}%\n" +
+                          $"Best Epoch: {result.BestEpoch}\n" +
+                          $"Time: {result.TrainingTime:hh\\:mm\\:ss}";
+
+        if (result.BestFitness >= 0.5)
+            ShowMessage(summary, AntdUI.TType.Success);
+        else
+            ShowMessage(summary, AntdUI.TType.Warn);
     }
 
     private void AppendLog(string message)

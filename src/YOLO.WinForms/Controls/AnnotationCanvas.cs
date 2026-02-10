@@ -20,25 +20,26 @@ public enum CanvasMode
 internal enum ResizeHandle
 {
     None,
-    TopLeft, Top, TopRight,
-    Left, Right,
-    BottomLeft, Bottom, BottomRight
+    TopLeft, TopRight,
+    BottomLeft, BottomRight
 }
 
 /// <summary>
-/// High-performance double-buffered canvas for image annotation with
-/// rectangle bounding boxes. Supports zoom/pan, drawing, selection,
-/// move/resize, and class-colored overlays.
-/// 
-/// Performance optimizations:
-/// - DoubleBufferedPanel eliminates paint flicker
-/// - All GDI+ pens, brushes and fonts are pre-cached (zero per-frame allocation)
-/// - Image is converted to Format32bppPArgb for native-speed blitting
-/// - Dirty-region invalidation where possible
+/// High-performance double-buffered canvas for image annotation.
+///
+/// Interaction model:
+///  - Left-click ON a box (any mode) → select it, show 4 corner handles + close X
+///  - Drag a corner handle → resize
+///  - Drag the box body → move
+///  - Click the X button → delete
+///  - Left-click on empty space in DrawRect mode → draw a new box
+///  - Right-click on a box → context menu (delete / change class)
+///  - Middle-click or Space+Left → pan
+///  - Mouse wheel → zoom
 /// </summary>
 public partial class AnnotationCanvas : UserControl
 {
-    // ── Cached GDI resources (created once, never disposed) ──────────
+    // ── Cached GDI resources (created once, shared across instances) ─
 
     private static readonly Color[] ClassColors =
     [
@@ -54,7 +55,6 @@ public partial class AnnotationCanvas : UserControl
         Color.FromArgb(220, 23, 190, 207),
     ];
 
-    // Per-class cached resources
     private static readonly Pen[] NormalPens;
     private static readonly Pen[] SelectedPens;
     private static readonly SolidBrush[] FillBrushes;
@@ -63,17 +63,20 @@ public partial class AnnotationCanvas : UserControl
     private static readonly Pen[] DrawPreviewPens;
     private static readonly SolidBrush[] DrawPreviewFills;
 
-    // Shared resources
     private static readonly Font LabelFont = new("Segoe UI", 9f, FontStyle.Bold);
+    private static readonly Font CloseFont = new("Segoe UI", 9f, FontStyle.Bold);
     private static readonly SolidBrush WhiteBrush = new(Color.White);
     private static readonly SolidBrush WhiteTextBrush = new(Color.White);
+    private static readonly SolidBrush CloseBgBrush = new(Color.FromArgb(220, 220, 50, 50));
+    private static readonly SolidBrush CloseBgHoverBrush = new(Color.FromArgb(240, 240, 60, 60));
     private static readonly Pen CrosshairPen = new(Color.FromArgb(120, 255, 255, 255), 1f)
     {
         DashStyle = DashStyle.Dot
     };
 
-    private const int HandleSize = 8;
+    private const int HandleSize = 10;
     private const float HandleHalf = HandleSize / 2f;
+    private const int CloseBtnSize = 18;  // size of the X delete button
 
     static AnnotationCanvas()
     {
@@ -109,18 +112,18 @@ public partial class AnnotationCanvas : UserControl
 
     // Zoom / pan
     private float _zoom = 1f;
-    private PointF _panOffset;     // image-space offset of viewport top-left
+    private PointF _panOffset;
 
     // Drawing
     private CanvasMode _mode = CanvasMode.DrawRect;
     private bool _isDrawing;
-    private PointF _drawStart;     // image-space
-    private PointF _drawCurrent;   // image-space
+    private PointF _drawStart;
+    private PointF _drawCurrent;
 
     // Selection
     private RectAnnotation? _selectedAnnotation;
     private bool _isDragging;
-    private PointF _dragStart;     // screen-space
+    private PointF _dragStart;
     private double _dragOrigCX, _dragOrigCY, _dragOrigW, _dragOrigH;
     private ResizeHandle _activeHandle = ResizeHandle.None;
 
@@ -132,13 +135,15 @@ public partial class AnnotationCanvas : UserControl
     // Space key held = temporary pan mode
     private bool _spaceHeld;
 
+    // Hover state for close button
+    private bool _hoveringCloseBtn;
+
     // ── Events ─────────────────────────────────────────────────────
 
     public event EventHandler<RectAnnotation>? AnnotationAdded;
     public event EventHandler<RectAnnotation?>? AnnotationSelected;
     public event EventHandler<RectAnnotation>? AnnotationChanged;
     public event EventHandler<RectAnnotation>? AnnotationDeleted;
-    /// <summary>Fired when user requests class change via right-click menu. Args: (annotation, newClassId).</summary>
     public event EventHandler<(RectAnnotation Annotation, int NewClassId)>? AnnotationClassChangeRequested;
     public event EventHandler<float>? ZoomChanged;
 
@@ -204,9 +209,6 @@ public partial class AnnotationCanvas : UserControl
 
     // ── Public methods ─────────────────────────────────────────────
 
-    /// <summary>
-    /// Load an image and its annotations for display.
-    /// </summary>
     public void LoadImage(Image? image, List<RectAnnotation> annotations)
     {
         _image = image;
@@ -218,9 +220,6 @@ public partial class AnnotationCanvas : UserControl
         FitToWindow();
     }
 
-    /// <summary>
-    /// Clear the canvas image (call before disposing the image externally).
-    /// </summary>
     public void ClearImage()
     {
         _image = null;
@@ -232,9 +231,6 @@ public partial class AnnotationCanvas : UserControl
         InvalidateCanvas();
     }
 
-    /// <summary>
-    /// Fit the image to the control bounds.
-    /// </summary>
     public void FitToWindow()
     {
         if (_image == null || _imageW == 0 || _imageH == 0)
@@ -247,8 +243,7 @@ public partial class AnnotationCanvas : UserControl
 
         float zw = (float)drawPanel.Width / _imageW;
         float zh = (float)drawPanel.Height / _imageH;
-        _zoom = Math.Min(zw, zh) * 0.95f; // 5% margin
-        // Center image
+        _zoom = Math.Min(zw, zh) * 0.95f;
         _panOffset = new PointF(
             (drawPanel.Width / _zoom - _imageW) / 2f,
             (drawPanel.Height / _zoom - _imageH) / 2f);
@@ -257,18 +252,12 @@ public partial class AnnotationCanvas : UserControl
         InvalidateCanvas();
     }
 
-    /// <summary>
-    /// Set zoom level programmatically.
-    /// </summary>
     public void SetZoom(float zoom)
     {
         var center = new PointF(drawPanel.Width / 2f, drawPanel.Height / 2f);
         ApplyZoom(zoom, center);
     }
 
-    /// <summary>
-    /// Delete the currently selected annotation.
-    /// </summary>
     public bool DeleteSelected()
     {
         if (_selectedAnnotation == null) return false;
@@ -281,33 +270,20 @@ public partial class AnnotationCanvas : UserControl
         return true;
     }
 
-    /// <summary>
-    /// Refresh without reloading.
-    /// </summary>
     public void RefreshCanvas() => InvalidateCanvas();
 
-    /// <summary>
-    /// Notify that the space key is being held (for pan mode).
-    /// </summary>
     public void SetSpaceHeld(bool held)
     {
         _spaceHeld = held;
         UpdateCursor();
     }
 
-    /// <summary>
-    /// Load an image from file with optimal pixel format for rendering.
-    /// Returns a Bitmap in Format32bppPArgb which is the native GDI+ screen
-    /// format — avoids per-pixel format conversion during DrawImage.
-    /// The file lock is released immediately after loading.
-    /// </summary>
     public static Bitmap? LoadOptimizedBitmap(string path)
     {
         try
         {
             using var fs = File.OpenRead(path);
             using var original = Image.FromStream(fs, false, false);
-            // Convert to pre-multiplied ARGB for fastest GDI+ blitting
             var bmp = new Bitmap(original.Width, original.Height, PixelFormat.Format32bppPArgb);
             bmp.SetResolution(original.HorizontalResolution, original.VerticalResolution);
             using var g = Graphics.FromImage(bmp);
@@ -324,7 +300,6 @@ public partial class AnnotationCanvas : UserControl
 
     // ── Coordinate transforms ──────────────────────────────────────
 
-    /// <summary>Screen coords -> image coords.</summary>
     private PointF ScreenToImage(Point screen)
     {
         float x = screen.X / _zoom - _panOffset.X;
@@ -332,7 +307,6 @@ public partial class AnnotationCanvas : UserControl
         return new PointF(x, y);
     }
 
-    /// <summary>Image coords -> screen coords.</summary>
     private PointF ImageToScreen(float imgX, float imgY)
     {
         float x = (imgX + _panOffset.X) * _zoom;
@@ -340,7 +314,6 @@ public partial class AnnotationCanvas : UserControl
         return new PointF(x, y);
     }
 
-    /// <summary>Convert annotation to screen rectangle.</summary>
     private RectangleF AnnotationToScreenRect(RectAnnotation a)
     {
         var (x1, y1, x2, y2) = a.ToPixelRect(_imageW, _imageH);
@@ -349,18 +322,51 @@ public partial class AnnotationCanvas : UserControl
         return RectangleF.FromLTRB(tl.X, tl.Y, br.X, br.Y);
     }
 
-    // ── Painting (zero-allocation hot path) ────────────────────────
+    // ── Hit-test helpers ───────────────────────────────────────────
+
+    /// <summary>Get the close-button rect for an annotation's screen rect.</summary>
+    private static RectangleF GetCloseButtonRect(RectangleF boxRect)
+    {
+        // Positioned at top-right corner, slightly outside the box
+        return new RectangleF(
+            boxRect.Right - CloseBtnSize + 4,
+            boxRect.Y - 4,
+            CloseBtnSize, CloseBtnSize);
+    }
+
+    /// <summary>Get the 4 corner handle rects for an annotation's screen rect.</summary>
+    private static Dictionary<ResizeHandle, RectangleF> GetHandleRects(RectangleF rect)
+    {
+        return new Dictionary<ResizeHandle, RectangleF>(4)
+        {
+            [ResizeHandle.TopLeft] = new(rect.X - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.TopRight] = new(rect.Right - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.BottomLeft] = new(rect.X - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
+            [ResizeHandle.BottomRight] = new(rect.Right - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
+        };
+    }
+
+    /// <summary>Hit-test annotations (top-most first).</summary>
+    private RectAnnotation? HitTestAnnotation(Point screenLocation)
+    {
+        for (int i = _annotations.Count - 1; i >= 0; i--)
+        {
+            var rect = AnnotationToScreenRect(_annotations[i]);
+            if (rect.Contains(screenLocation))
+                return _annotations[i];
+        }
+        return null;
+    }
+
+    // ── Painting ───────────────────────────────────────────────────
 
     private void DrawPanel_Paint(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
-
-        // Clear background explicitly (OnPaintBackground is suppressed in DoubleBufferedPanel)
         g.Clear(drawPanel.BackColor);
 
         if (_image == null) return;
 
-        // Configure quality
         g.SmoothingMode = SmoothingMode.HighQuality;
         g.InterpolationMode = _zoom > 2f
             ? InterpolationMode.NearestNeighbor
@@ -374,7 +380,7 @@ public partial class AnnotationCanvas : UserControl
         var br = ImageToScreen(_imageW, _imageH);
         g.DrawImage(_image, tl.X, tl.Y, br.X - tl.X, br.Y - tl.Y);
 
-        // Draw annotations (using cached GDI objects — no allocations)
+        // Draw annotations
         for (int i = 0; i < _annotations.Count; i++)
         {
             var a = _annotations[i];
@@ -389,7 +395,7 @@ public partial class AnnotationCanvas : UserControl
             // Semi-transparent fill
             g.FillRectangle(FillBrushes[colorIdx], rect);
 
-            // Label
+            // Label at top-left
             string label = a.ClassId < _classNames.Count
                 ? _classNames[a.ClassId]
                 : $"class_{a.ClassId}";
@@ -404,8 +410,12 @@ public partial class AnnotationCanvas : UserControl
             g.FillRectangle(LabelBgBrushes[colorIdx], labelRect);
             g.DrawString(label, LabelFont, WhiteTextBrush, labelRect.X + 3, labelRect.Y + 1);
 
-            // Resize handles for selected
-            if (selected) DrawResizeHandles(g, rect, colorIdx);
+            // Selected → draw 4 corner handles + close X button
+            if (selected)
+            {
+                DrawCornerHandles(g, rect, colorIdx);
+                DrawCloseButton(g, rect);
+            }
         }
 
         // Drawing preview
@@ -421,28 +431,16 @@ public partial class AnnotationCanvas : UserControl
             g.DrawRectangle(DrawPreviewPens[previewColorIdx],
                 drawRect.X, drawRect.Y, drawRect.Width, drawRect.Height);
             g.FillRectangle(DrawPreviewFills[previewColorIdx], drawRect);
-
-            // Crosshair lines at current mouse position
-            g.DrawLine(CrosshairPen, _drawCurrent.X > 0 ? 0 : drawRect.Right,
-                (int)((br2.Y + tl2.Y) / 2),
-                drawPanel.Width, (int)((br2.Y + tl2.Y) / 2));
         }
     }
 
-    private void DrawResizeHandles(Graphics g, RectangleF rect, int colorIdx)
+    private void DrawCornerHandles(Graphics g, RectangleF rect, int colorIdx)
     {
-        float mx = rect.X + rect.Width / 2;
-        float my = rect.Y + rect.Height / 2;
         var pen = HandlePens[colorIdx];
-
-        DrawHandle(g, pen, rect.X, rect.Y);                // TopLeft
-        DrawHandle(g, pen, mx, rect.Y);                     // Top
-        DrawHandle(g, pen, rect.Right, rect.Y);             // TopRight
-        DrawHandle(g, pen, rect.X, my);                     // Left
-        DrawHandle(g, pen, rect.Right, my);                  // Right
-        DrawHandle(g, pen, rect.X, rect.Bottom);            // BottomLeft
-        DrawHandle(g, pen, mx, rect.Bottom);                 // Bottom
-        DrawHandle(g, pen, rect.Right, rect.Bottom);        // BottomRight
+        DrawHandle(g, pen, rect.X, rect.Y);
+        DrawHandle(g, pen, rect.Right, rect.Y);
+        DrawHandle(g, pen, rect.X, rect.Bottom);
+        DrawHandle(g, pen, rect.Right, rect.Bottom);
     }
 
     private static void DrawHandle(Graphics g, Pen pen, float cx, float cy)
@@ -453,22 +451,22 @@ public partial class AnnotationCanvas : UserControl
         g.DrawRectangle(pen, x, y, HandleSize, HandleSize);
     }
 
-    private Dictionary<ResizeHandle, RectangleF> GetHandleRects(RectangleF rect)
+    /// <summary>Draw the red X close button at top-right of the annotation box.</summary>
+    private void DrawCloseButton(Graphics g, RectangleF boxRect)
     {
-        float mx = rect.X + rect.Width / 2;
-        float my = rect.Y + rect.Height / 2;
+        var btnRect = GetCloseButtonRect(boxRect);
+        var bg = _hoveringCloseBtn ? CloseBgHoverBrush : CloseBgBrush;
 
-        return new Dictionary<ResizeHandle, RectangleF>(8)
-        {
-            [ResizeHandle.TopLeft] = new(rect.X - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.Top] = new(mx - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.TopRight] = new(rect.Right - HandleHalf, rect.Y - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.Left] = new(rect.X - HandleHalf, my - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.Right] = new(rect.Right - HandleHalf, my - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.BottomLeft] = new(rect.X - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.Bottom] = new(mx - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
-            [ResizeHandle.BottomRight] = new(rect.Right - HandleHalf, rect.Bottom - HandleHalf, HandleSize, HandleSize),
-        };
+        // Rounded rectangle background
+        g.FillEllipse(bg, btnRect);
+
+        // Draw the X
+        float cx = btnRect.X + btnRect.Width / 2f;
+        float cy = btnRect.Y + btnRect.Height / 2f;
+        float d = 4f; // half-length of X strokes
+        using var xPen = new Pen(Color.White, 2f);
+        g.DrawLine(xPen, cx - d, cy - d, cx + d, cy + d);
+        g.DrawLine(xPen, cx + d, cy - d, cx - d, cy + d);
     }
 
     // ── Mouse events ───────────────────────────────────────────────
@@ -497,59 +495,71 @@ public partial class AnnotationCanvas : UserControl
 
         if (e.Button != MouseButtons.Left) return;
 
-        var imgPt = ScreenToImage(e.Location);
-
-        if (_mode == CanvasMode.Select)
+        // ── Priority 1: close button on selected annotation ──
+        if (_selectedAnnotation != null)
         {
-            // Check resize handles first
-            if (_selectedAnnotation != null)
+            var selRect = AnnotationToScreenRect(_selectedAnnotation);
+            var closeRect = GetCloseButtonRect(selRect);
+            if (closeRect.Contains(e.Location))
             {
-                var rect = AnnotationToScreenRect(_selectedAnnotation);
-                var handles = GetHandleRects(rect);
-                foreach (var (handle, r) in handles)
-                {
-                    if (r.Contains(e.Location))
-                    {
-                        _activeHandle = handle;
-                        _isDragging = true;
-                        _dragStart = e.Location;
-                        _dragOrigCX = _selectedAnnotation.CX;
-                        _dragOrigCY = _selectedAnnotation.CY;
-                        _dragOrigW = _selectedAnnotation.W;
-                        _dragOrigH = _selectedAnnotation.H;
-                        return;
-                    }
-                }
-            }
-
-            // Check hit on annotation body (reverse order = top-most first)
-            RectAnnotation? hit = null;
-            for (int i = _annotations.Count - 1; i >= 0; i--)
-            {
-                var rect = AnnotationToScreenRect(_annotations[i]);
-                if (rect.Contains(e.Location))
-                {
-                    hit = _annotations[i];
-                    break;
-                }
-            }
-
-            SelectedAnnotation = hit;
-
-            if (hit != null)
-            {
-                _isDragging = true;
-                _dragStart = e.Location;
-                _activeHandle = ResizeHandle.None;
-                _dragOrigCX = hit.CX;
-                _dragOrigCY = hit.CY;
-                _dragOrigW = hit.W;
-                _dragOrigH = hit.H;
+                // Delete this annotation
+                var toDelete = _selectedAnnotation;
+                _annotations.Remove(toDelete);
+                _selectedAnnotation = null;
+                AnnotationDeleted?.Invoke(this, toDelete);
+                AnnotationSelected?.Invoke(this, null);
+                InvalidateCanvas();
+                return;
             }
         }
-        else if (_mode == CanvasMode.DrawRect)
+
+        // ── Priority 2: resize handle on selected annotation ──
+        if (_selectedAnnotation != null)
         {
-            // Clamp to image bounds
+            var selRect = AnnotationToScreenRect(_selectedAnnotation);
+            var handles = GetHandleRects(selRect);
+            foreach (var (handle, r) in handles)
+            {
+                if (r.Contains(e.Location))
+                {
+                    _activeHandle = handle;
+                    _isDragging = true;
+                    _dragStart = e.Location;
+                    _dragOrigCX = _selectedAnnotation.CX;
+                    _dragOrigCY = _selectedAnnotation.CY;
+                    _dragOrigW = _selectedAnnotation.W;
+                    _dragOrigH = _selectedAnnotation.H;
+                    return;
+                }
+            }
+        }
+
+        // ── Priority 3: click ON an existing annotation (any mode) ──
+        var hit = HitTestAnnotation(e.Location);
+        if (hit != null)
+        {
+            SelectedAnnotation = hit;
+            _isDragging = true;
+            _dragStart = e.Location;
+            _activeHandle = ResizeHandle.None;
+            _dragOrigCX = hit.CX;
+            _dragOrigCY = hit.CY;
+            _dragOrigW = hit.W;
+            _dragOrigH = hit.H;
+            return;
+        }
+
+        // ── Priority 4: click on empty space ──
+        // Deselect any selected annotation
+        if (_selectedAnnotation != null)
+        {
+            SelectedAnnotation = null;
+        }
+
+        // In DrawRect mode, start drawing on empty space
+        if (_mode == CanvasMode.DrawRect)
+        {
+            var imgPt = ScreenToImage(e.Location);
             imgPt.X = Math.Clamp(imgPt.X, 0, _imageW);
             imgPt.Y = Math.Clamp(imgPt.Y, 0, _imageH);
             _isDrawing = true;
@@ -584,13 +594,11 @@ public partial class AnnotationCanvas : UserControl
             float dxScreen = e.X - _dragStart.X;
             float dyScreen = e.Y - _dragStart.Y;
 
-            // Convert screen delta to normalized delta
             double dxNorm = dxScreen / (_zoom * _imageW);
             double dyNorm = dyScreen / (_zoom * _imageH);
 
             if (_activeHandle == ResizeHandle.None)
             {
-                // Move entire annotation
                 _selectedAnnotation.CX = Math.Clamp(_dragOrigCX + dxNorm, 0, 1);
                 _selectedAnnotation.CY = Math.Clamp(_dragOrigCY + dyNorm, 0, 1);
             }
@@ -604,26 +612,56 @@ public partial class AnnotationCanvas : UserControl
             return;
         }
 
-        // Update cursor based on hover
-        if (_mode == CanvasMode.Select && _selectedAnnotation != null)
+        // ── Hover cursor updates ──
+        // Check close button hover (triggers repaint for highlight)
+        bool wasHovering = _hoveringCloseBtn;
+        _hoveringCloseBtn = false;
+
+        if (_selectedAnnotation != null)
         {
-            var rect = AnnotationToScreenRect(_selectedAnnotation);
-            var handles = GetHandleRects(rect);
+            var selRect = AnnotationToScreenRect(_selectedAnnotation);
+
+            // Close button
+            var closeRect = GetCloseButtonRect(selRect);
+            if (closeRect.Contains(e.Location))
+            {
+                _hoveringCloseBtn = true;
+                drawPanel.Cursor = Cursors.Hand;
+                if (!wasHovering) InvalidateCanvas();
+                return;
+            }
+
+            // Resize handles
+            var handles = GetHandleRects(selRect);
             foreach (var (handle, r) in handles)
             {
                 if (r.Contains(e.Location))
                 {
                     drawPanel.Cursor = GetHandleCursor(handle);
+                    if (wasHovering) InvalidateCanvas();
                     return;
                 }
             }
-            if (rect.Contains(e.Location))
+
+            // Body
+            if (selRect.Contains(e.Location))
             {
                 drawPanel.Cursor = Cursors.SizeAll;
+                if (wasHovering) InvalidateCanvas();
                 return;
             }
         }
 
+        // Check hover on any annotation body (show hand cursor)
+        var hoverHit = HitTestAnnotation(e.Location);
+        if (hoverHit != null)
+        {
+            drawPanel.Cursor = Cursors.Hand;
+            if (wasHovering) InvalidateCanvas();
+            return;
+        }
+
+        if (wasHovering) InvalidateCanvas();
         UpdateCursor();
     }
 
@@ -640,13 +678,11 @@ public partial class AnnotationCanvas : UserControl
         {
             _isDrawing = false;
 
-            // Compute rect in image space
             float x1 = Math.Min(_drawStart.X, _drawCurrent.X);
             float y1 = Math.Min(_drawStart.Y, _drawCurrent.Y);
             float x2 = Math.Max(_drawStart.X, _drawCurrent.X);
             float y2 = Math.Max(_drawStart.Y, _drawCurrent.Y);
 
-            // Min size check (at least 4 pixels in image space)
             if (x2 - x1 > 4 && y2 - y1 > 4)
             {
                 var annotation = RectAnnotation.FromPixelRect(
@@ -660,7 +696,6 @@ public partial class AnnotationCanvas : UserControl
 
         if (_isDragging && _selectedAnnotation != null)
         {
-            // Fire changed with final state (the panel handles undo)
             AnnotationChanged?.Invoke(this, _selectedAnnotation);
             _isDragging = false;
             _activeHandle = ResizeHandle.None;
@@ -678,10 +713,8 @@ public partial class AnnotationCanvas : UserControl
 
     private void ApplyZoom(float newZoom, PointF screenPivot)
     {
-        // Zoom around the pivot point
         var imgPivot = ScreenToImage(Point.Round(screenPivot));
         _zoom = Math.Clamp(newZoom, 0.05f, 50f);
-        // Adjust pan so that imgPivot stays at screenPivot
         _panOffset = new PointF(
             screenPivot.X / _zoom - imgPivot.X,
             screenPivot.Y / _zoom - imgPivot.Y);
@@ -704,23 +737,14 @@ public partial class AnnotationCanvas : UserControl
         {
             case ResizeHandle.TopLeft:
                 left += dxNorm; top += dyNorm; break;
-            case ResizeHandle.Top:
-                top += dyNorm; break;
             case ResizeHandle.TopRight:
                 right += dxNorm; top += dyNorm; break;
-            case ResizeHandle.Left:
-                left += dxNorm; break;
-            case ResizeHandle.Right:
-                right += dxNorm; break;
             case ResizeHandle.BottomLeft:
                 left += dxNorm; bottom += dyNorm; break;
-            case ResizeHandle.Bottom:
-                bottom += dyNorm; break;
             case ResizeHandle.BottomRight:
                 right += dxNorm; bottom += dyNorm; break;
         }
 
-        // Clamp & min size
         left = Math.Clamp(left, 0, 1);
         top = Math.Clamp(top, 0, 1);
         right = Math.Clamp(right, 0, 1);
@@ -751,8 +775,6 @@ public partial class AnnotationCanvas : UserControl
     {
         ResizeHandle.TopLeft or ResizeHandle.BottomRight => Cursors.SizeNWSE,
         ResizeHandle.TopRight or ResizeHandle.BottomLeft => Cursors.SizeNESW,
-        ResizeHandle.Top or ResizeHandle.Bottom => Cursors.SizeNS,
-        ResizeHandle.Left or ResizeHandle.Right => Cursors.SizeWE,
         _ => Cursors.Default
     };
 
@@ -760,31 +782,16 @@ public partial class AnnotationCanvas : UserControl
 
     private void HandleRightClick(Point screenLocation)
     {
-        // Hit-test: find which annotation was right-clicked
-        RectAnnotation? hit = null;
-        for (int i = _annotations.Count - 1; i >= 0; i--)
-        {
-            var rect = AnnotationToScreenRect(_annotations[i]);
-            if (rect.Contains(screenLocation))
-            {
-                hit = _annotations[i];
-                break;
-            }
-        }
-
+        var hit = HitTestAnnotation(screenLocation);
         if (hit == null) return;
 
-        // Select it first
         SelectedAnnotation = hit;
 
-        // Build context menu
         var menu = new ContextMenuStrip();
         menu.Font = new Font("Segoe UI", 9F);
 
-        // ── Delete ──
         var deleteItem = new ToolStripMenuItem("Delete annotation");
         deleteItem.ShortcutKeyDisplayString = "Del";
-        deleteItem.Image = null;
         deleteItem.Click += (s, e) =>
         {
             _annotations.Remove(hit);
@@ -797,7 +804,6 @@ public partial class AnnotationCanvas : UserControl
 
         menu.Items.Add(new ToolStripSeparator());
 
-        // ── Change class sub-menu ──
         if (_classNames.Count > 0)
         {
             var changeClassItem = new ToolStripMenuItem("Change class");
@@ -806,7 +812,6 @@ public partial class AnnotationCanvas : UserControl
                 int classId = i;
                 string label = $"[{i}] {_classNames[i]}";
                 var classItem = new ToolStripMenuItem(label);
-                // Mark current class with a check
                 if (classId == hit.ClassId)
                 {
                     classItem.Checked = true;
@@ -814,7 +819,6 @@ public partial class AnnotationCanvas : UserControl
                 }
                 classItem.Click += (s, e) =>
                 {
-                    int oldClass = hit.ClassId;
                     hit.ClassId = classId;
                     AnnotationClassChangeRequested?.Invoke(this, (hit, classId));
                     AnnotationChanged?.Invoke(this, hit);
@@ -830,10 +834,6 @@ public partial class AnnotationCanvas : UserControl
 
     // ── Invalidation ──────────────────────────────────────────────
 
-    /// <summary>
-    /// Invalidate the drawing surface. This is the single entry point
-    /// for all repaint requests to avoid hiding the base Invalidate().
-    /// </summary>
     private void InvalidateCanvas()
     {
         if (drawPanel != null && !drawPanel.IsDisposed)

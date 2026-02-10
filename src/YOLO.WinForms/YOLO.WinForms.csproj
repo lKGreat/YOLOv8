@@ -25,6 +25,7 @@
     <ProjectReference Include="..\YOLO.Inference\YOLO.Inference.csproj" />
     <ProjectReference Include="..\YOLO.Training\YOLO.Training.csproj" />
     <ProjectReference Include="..\YOLO.Export\YOLO.Export.csproj" />
+    <ProjectReference Include="..\YOLO.Runtime\YOLO.Runtime.csproj" />
   </ItemGroup>
 
 </Project>
